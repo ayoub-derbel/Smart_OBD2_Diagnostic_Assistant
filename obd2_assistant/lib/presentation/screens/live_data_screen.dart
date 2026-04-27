@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
+import '../providers/obd_data_provider.dart';
+import 'package:provider/provider.dart';
 
 class LiveDataScreen extends StatelessWidget {
   const LiveDataScreen({Key? key}) : super(key: key);
@@ -9,37 +11,41 @@ class LiveDataScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(AppSpacing.lg),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildHeader(context),
-              const SizedBox(height: AppSpacing.xl),
-              _buildSensorCard(context, 'RPM', '2450 rpm', Colors.blue),
-              const SizedBox(height: AppSpacing.md),
-              _buildSensorCard(context, 'Engine Temp', '92 °C', Colors.orange),
-              const SizedBox(height: AppSpacing.md),
-              _buildSensorCard(context, 'Speed', '0 km/h', Colors.green),
-              const SizedBox(height: AppSpacing.xl),
-              
-              Text(
-                'Quick Overview',
-                style: Theme.of(context).textTheme.titleMedium,
+        child: Consumer<ObdDataProvider>(
+          builder: (context, obdData, child) {
+            return SingleChildScrollView(
+              padding: const EdgeInsets.all(AppSpacing.lg),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildHeader(context, obdData),
+                  const SizedBox(height: AppSpacing.xl),
+                  _buildSensorCard(context, 'RPM', '${obdData.rpm ?? "---"} rpm', Colors.blue),
+                  const SizedBox(height: AppSpacing.md),
+                  _buildSensorCard(context, 'MAF', '${obdData.maf?.toStringAsFixed(2) ?? "---"} g/s', Colors.cyan),
+                  const SizedBox(height: AppSpacing.md),
+                  _buildSensorCard(context, 'Speed', '${obdData.speed ?? "---"} km/h', Colors.green),
+                  const SizedBox(height: AppSpacing.xl),
+                  
+                  Text(
+                    'Quick Overview',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  _buildQuickGrid(context, obdData),
+                  const SizedBox(height: AppSpacing.xl),
+                  
+                  _buildFooterMetrics(context),
+                ],
               ),
-              const SizedBox(height: AppSpacing.md),
-              _buildQuickGrid(context),
-              const SizedBox(height: AppSpacing.xl),
-              
-              _buildFooterMetrics(context),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );
   }
 
-  Widget _buildHeader(BuildContext context) {
+  Widget _buildHeader(BuildContext context, ObdDataProvider obdData) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -59,8 +65,15 @@ class LiveDataScreen extends StatelessWidget {
             ),
             const SizedBox(width: AppSpacing.sm),
             IconButton(
-              onPressed: () {},
-              icon: const Icon(Icons.pause_rounded, color: AppColors.secondaryText),
+              onPressed: () {
+                if (obdData.isPolling) {
+                  obdData.stopPolling();
+                } else {
+                  obdData.startPolling();
+                }
+              },
+              icon: Icon(obdData.isPolling ? Icons.pause_rounded : Icons.play_arrow_rounded, 
+                  color: AppColors.secondaryText),
               style: IconButton.styleFrom(
                 backgroundColor: AppColors.surface,
                 shape: const CircleBorder(),
@@ -123,14 +136,14 @@ class LiveDataScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildQuickGrid(BuildContext context) {
+  Widget _buildQuickGrid(BuildContext context, ObdDataProvider obdData) {
     return Row(
       children: [
-        _buildCompactTile(context, '⚡ Battery', '13.8 V'),
+        _buildCompactTile(context, '⚡ Battery', '${obdData.batteryVoltage?.toStringAsFixed(1) ?? "---"} V'),
         const SizedBox(width: AppSpacing.md),
-        _buildCompactTile(context, '🏎️ Speed', '0 km/h'),
+        _buildCompactTile(context, '🏎️ Speed', '${obdData.speed ?? "---"} km/h'),
         const SizedBox(width: AppSpacing.md),
-        _buildCompactTile(context, '⛽ Fuel', '42 %'),
+        _buildCompactTile(context, '🌬️ MAF', '${obdData.maf?.toStringAsFixed(1) ?? "---"}'),
       ],
     );
   }

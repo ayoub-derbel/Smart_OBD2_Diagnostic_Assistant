@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../core/theme/app_colors.dart';
+import '../providers/bluetooth_provider.dart';
+import '../../domain/entities/bluetooth_device_entity.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({Key? key}) : super(key: key);
@@ -24,14 +27,6 @@ class SettingsScreen extends StatelessWidget {
               _buildConnectionCard(context),
               const SizedBox(height: AppSpacing.xl),
               
-              _buildSectionTitle(context, '🧠 AI Configuration (Groq)'),
-              _buildAiConfigCard(context),
-              const SizedBox(height: AppSpacing.xl),
-              
-              _buildSectionTitle(context, '📊 Display Preferences'),
-              _buildPreferencesCard(context),
-              const SizedBox(height: AppSpacing.xl),
-              
               _buildSectionTitle(context, 'ℹ️ About'),
               _buildAboutCard(context),
               const SizedBox(height: AppSpacing.xl),
@@ -53,73 +48,86 @@ class SettingsScreen extends StatelessWidget {
   }
 
   Widget _buildConnectionCard(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppRadii.lg),
-        border: Border.all(color: AppColors.divider),
-      ),
-      child: Column(
-        children: [
-          _buildListTile(context, 'OBDII-Bluetooth', 'Signal: 📶 Strong', isConnected: true),
-          const Divider(height: 1, indent: 16, endIndent: 16),
-          _buildListTile(context, 'ELM327-V2', 'Signal: 📶 Fair'),
-          const Divider(height: 1, indent: 16, endIndent: 16),
-          Padding(
-            padding: const EdgeInsets.all(AppSpacing.md),
-            child: SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () {},
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
-                ),
-                child: const Text('Scan for Devices'),
-              ),
-            ),
+    return Consumer<BluetoothProvider>(
+      builder: (context, provider, child) {
+        return Container(
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(AppRadii.lg),
+            border: Border.all(color: AppColors.divider),
           ),
-        ],
-      ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (provider.state == BluetoothState.scanning)
+                const Padding(
+                  padding: EdgeInsets.all(AppSpacing.md),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+              if (provider.errorMessage != null)
+                Padding(
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  child: Text(
+                    provider.errorMessage!,
+                    style: const TextStyle(color: AppColors.error),
+                  ),
+                ),
+              if (provider.connectedDevice != null)
+                Column(
+                  children: [
+                    _buildListTile(
+                      context, 
+                      provider.connectedDevice!.name, 
+                      'Connected', 
+                      isConnected: true,
+                      onTap: () => provider.disconnect(),
+                    ),
+                    const Divider(height: 1, indent: 16, endIndent: 16),
+                  ],
+                ),
+              if (provider.devices.isNotEmpty && provider.state != BluetoothState.connected)
+                ...provider.devices.map((device) => Column(
+                  children: [
+                    _buildListTile(
+                      context, 
+                      device.name, 
+                      device.id, 
+                      onTap: () => provider.connect(device),
+                    ),
+                    const Divider(height: 1, indent: 16, endIndent: 16),
+                  ],
+                )),
+              if (provider.devices.isEmpty && provider.state != BluetoothState.scanning && provider.connectedDevice == null)
+                const Padding(
+                  padding: EdgeInsets.all(AppSpacing.md),
+                  child: Text('No devices found. Press Scan.', style: TextStyle(color: AppColors.secondaryText)),
+                ),
+              Padding(
+                padding: const EdgeInsets.all(AppSpacing.md),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: provider.state == BluetoothState.scanning 
+                        ? null 
+                        : () => provider.startScan(),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
+                    ),
+                    child: Text(provider.state == BluetoothState.scanning ? 'Scanning...' : 'Scan for Devices'),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
-  Widget _buildAiConfigCard(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(AppSpacing.lg),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppRadii.lg),
-        border: Border.all(color: AppColors.divider),
-      ),
-      child: Column(
-        children: [
-          _buildTextField(context, 'Model', 'Llama 3 70B (Groq)'),
-          const SizedBox(height: AppSpacing.md),
-          _buildTextField(context, 'API Key', '••••••••••••••••', isPassword: true),
-        ],
-      ),
-    );
-  }
 
-  Widget _buildPreferencesCard(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppRadii.lg),
-        border: Border.all(color: AppColors.divider),
-      ),
-      child: Column(
-        children: [
-          _buildSwitchTile('Show raw frames (console)', true),
-          const Divider(height: 1, indent: 16, endIndent: 16),
-          _buildSwitchTile('Enable Debug Mode', false),
-        ],
-      ),
-    );
-  }
 
   Widget _buildAboutCard(BuildContext context) {
     return Container(
@@ -157,14 +165,14 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildListTile(BuildContext context, String title, String subtitle, {bool isConnected = false}) {
+  Widget _buildListTile(BuildContext context, String title, String subtitle, {bool isConnected = false, VoidCallback? onTap}) {
     return ListTile(
       title: Text(title, style: Theme.of(context).textTheme.bodyLarge),
       subtitle: Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
       trailing: isConnected 
         ? const Icon(Icons.check_circle_rounded, color: AppColors.success)
         : null,
-      onTap: () {},
+      onTap: onTap,
     );
   }
 

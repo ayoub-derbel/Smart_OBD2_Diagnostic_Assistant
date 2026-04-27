@@ -26,51 +26,46 @@ class AiApiService {
     }
   }
 
-  Future<DiagnosticResult> analyzeDtc(String dtcCode, String carModel) async {
+  Future<DiagnosticResult> analyzeDtc(String dtcCode, String carInfo) async {
     final String systemPrompt = """
 You are an automotive diagnostic assistant.
 You need to explain OBD-II codes in a clear and reassuring way for a driver.
 
+CONTEXT:
+The user will provide a DTC code and vehicle information.
+IMPORTANT: If the vehicle information provided is a 17-character string, it is a VIN (Vehicle Identification Number). 
+You MUST decode this VIN to identify the Make, Model, and Year of the vehicle before providing the diagnostic.
+
 For each OBD-II code, you must provide:
+- Identification: (Only if a VIN was provided) Confirm the vehicle you identified (e.g. "2020 Ford Explorer")
 - An interpretation of the problem in simple terms
 - The possible causes (ordered from most probable to least probable)
 - Advise / troubleshooting actions for the driver
 
 IMPORTANT:
 - Always list causes in decreasing order of likelihood.
-- The most probable cause must be first.
-- The least probable cause must be last.
-- Use practical, real-world probability based on common failure patterns.
-
-Here is an example of a good response:
-
-DTC: P0128
-Vehicle: Corolla
-Interpretation: The engine is taking too long to reach its normal operating temperature. This is often related to the cooling system.
-Possible causes:
-1. Faulty thermostat (stuck open)
-2. Low coolant level
-3. Defective coolant temperature sensor
-Advise / troubleshooting actions: You can generally continue driving, but avoid repeated short trips as the engine isn't running at its ideal temperature, which can increase fuel consumption and wear.
+- Use practical, real-world probability based on common failure patterns for that specific vehicle.
 
 Now, provide your answer strictly in the JSON format below:
 
 {
-  "code": "",
-  "problem": "",
-  "explanation": "",
+  "identified_vehicle": "Make Model Year",
+  "problem": "Simple explanation",
+  "explanation": "Detailed technical but accessible explanation",
   "possible_causes": [
     "Most probable cause",
-    "Less probable cause",
-    "Least probable cause"
+    "Less probable cause"
   ],
-  "recommended_actions": []
+  "recommended_actions": [
+    "Step 1",
+    "Step 2"
+  ]
 }
 """;
 
     final String userPrompt = """
 DTC Code: $dtcCode
-Vehicle Model: $carModel
+Vehicle Info (Model or VIN): $carInfo
 """;
 
     try {
@@ -134,6 +129,7 @@ Vehicle Model: $carModel
 
       final Map<String, dynamic> jsonData = jsonDecode(jsonStr);
 
+      final vehicle = jsonData['identified_vehicle']?.toString();
       final problem = jsonData['problem']?.toString() ?? '';
       final explanation = jsonData['explanation']?.toString() ?? '';
       
@@ -151,6 +147,7 @@ Vehicle Model: $carModel
       final actionsStr = actionsList.map((e) => "• ${e.toString()}").join("\n");
 
       return DiagnosticResult(
+        identifiedVehicle: vehicle,
         interpretation: interpretation.isEmpty ? "Interprétation non trouvée dans la réponse." : interpretation,
         possibleCauses: causesStr.isEmpty ? "Causes non trouvées." : causesStr,
         troubleshootingSteps: actionsStr.isEmpty ? "Actions non trouvées." : actionsStr,

@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 import '../widgets/design_system/dtc_card_widget.dart';
+import '../providers/obd_data_provider.dart';
+import '../providers/diagnostic_provider.dart';
+import 'ai_analysis_detail_screen.dart';
+import 'package:provider/provider.dart';
 
 class DiagnosticScreen extends StatelessWidget {
   const DiagnosticScreen({Key? key}) : super(key: key);
@@ -10,55 +14,108 @@ class DiagnosticScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
-        child: Stack(
+        child: Consumer<ObdDataProvider>(
+          builder: (context, obdData, child) {
+            return Stack(
+              children: [
+                SingleChildScrollView(
+                  padding: const EdgeInsets.only(
+                    left: AppSpacing.lg,
+                    right: AppSpacing.lg,
+                    top: AppSpacing.md,
+                    bottom: 120, // Space for button
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildHeader(context),
+                      const SizedBox(height: AppSpacing.lg),
+                      _buildStatusOverview(context, obdData.dtcs.length),
+                      const SizedBox(height: AppSpacing.xl),
+                      Text(
+                        'Detected Faults',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                      if (obdData.vin == null)
+                        _buildNotConnectedState(context)
+                      else if (obdData.dtcs.isEmpty)
+                        _buildEmptyState(context)
+                      else
+                        ...obdData.dtcs.map((dtc) => DtcCardWidget(
+                              code: dtc,
+                              description: _getBasicDescription(dtc),
+                              status: 'Confirmed',
+                              onAnalysisPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => AiAnalysisDetailScreen(dtcCode: dtc),
+                                  ),
+                                );
+                              },
+                            )),
+                      const SizedBox(height: AppSpacing.lg),
+                      _buildPendingInfo(context),
+                    ],
+                  ),
+                ),
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: _buildScanButtonLayout(context, obdData),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNotConnectedState(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.xl),
+        child: Column(
           children: [
-            SingleChildScrollView(
-              padding: const EdgeInsets.only(
-                left: AppSpacing.lg,
-                right: AppSpacing.lg,
-                top: AppSpacing.md,
-                bottom: 120, // Space for button
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildHeader(context),
-                  const SizedBox(height: AppSpacing.lg),
-                  _buildStatusOverview(context),
-                  const SizedBox(height: AppSpacing.xl),
-                  Text(
-                    'Detected Faults',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  DtcCardWidget(
-                    code: 'P0301',
-                    description: 'Cylinder 1 Misfire Detected',
-                    status: 'Confirmed',
-                    onAnalysisPressed: () {},
-                  ),
-                  DtcCardWidget(
-                    code: 'P0420',
-                    description: 'Catalyst System Efficiency Below Threshold (Bank 1)',
-                    status: 'Pending',
-                    severityColor: AppColors.accent,
-                    severityBg: AppColors.accent.withOpacity(0.1),
-                    onAnalysisPressed: () {},
-                  ),
-                  _buildPendingInfo(context),
-                ],
-              ),
-            ),
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: _buildScanButtonLayout(context),
-            ),
+            const Icon(Icons.bluetooth_disabled_rounded, color: AppColors.secondaryText, size: 64),
+            const SizedBox(height: AppSpacing.md),
+            Text('Not Connected', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 4),
+            const Text('Connect to an OBD-II device to run diagnostics.', 
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppColors.secondaryText)),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildEmptyState(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.xl),
+        child: Column(
+          children: [
+            const Icon(Icons.check_circle_rounded, color: AppColors.success, size: 64),
+            const SizedBox(height: AppSpacing.md),
+            Text('No Faults Detected', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 4),
+            const Text('Your vehicle systems appear to be healthy.', style: TextStyle(color: AppColors.secondaryText)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _getBasicDescription(String dtc) {
+    // Simplified mapping for common codes used in emulator
+    if (dtc == "P0101") return "Mass Air Flow Circuit Range/Performance";
+    if (dtc == "P0300") return "Random or Multiple Cylinder Misfire Detected";
+    if (dtc == "P0171") return "System Too Lean (Bank 1)";
+    return "OBD-II Fault Code Detected";
   }
 
   Widget _buildHeader(BuildContext context) {
@@ -91,31 +148,37 @@ class DiagnosticScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildStatusOverview(BuildContext context) {
+  Widget _buildStatusOverview(BuildContext context, int count) {
+    bool hasFaults = count > 0;
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
-        color: AppColors.error.withOpacity(0.1),
+        color: (hasFaults ? AppColors.error : AppColors.success).withOpacity(0.1),
         borderRadius: BorderRadius.circular(AppRadii.md),
-        border: Border.all(color: AppColors.error.withOpacity(0.2)),
+        border: Border.all(color: (hasFaults ? AppColors.error : AppColors.success).withOpacity(0.2)),
       ),
       child: Row(
         children: [
-          const Icon(Icons.error_outline_rounded, color: AppColors.error, size: 20),
+          Icon(
+            hasFaults ? Icons.error_outline_rounded : Icons.check_circle_outline_rounded, 
+            color: hasFaults ? AppColors.error : AppColors.success, 
+            size: 20
+          ),
           const SizedBox(width: AppSpacing.md),
           Expanded(
             child: Text(
-              '2 fault codes detected',
+              hasFaults ? '$count fault codes detected' : 'System healthy',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: AppColors.error,
+                    color: hasFaults ? AppColors.error : AppColors.success,
                     fontWeight: FontWeight.bold,
                   ),
             ),
           ),
-          Text(
-            'Priority: High',
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(color: AppColors.error),
-          ),
+          if (hasFaults)
+            Text(
+              'Priority: High',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(color: AppColors.error),
+            ),
         ],
       ),
     );
@@ -155,12 +218,12 @@ class DiagnosticScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildScanButtonLayout(BuildContext context) {
+  Widget _buildScanButtonLayout(BuildContext context, ObdDataProvider obdData) {
     return Container(
       padding: const EdgeInsets.all(AppSpacing.lg),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        border: Border(top: BorderSide(color: AppColors.divider)),
+        border: const Border(top: BorderSide(color: AppColors.divider)),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.05),
@@ -170,7 +233,7 @@ class DiagnosticScreen extends StatelessWidget {
         ],
       ),
       child: ElevatedButton(
-        onPressed: () {},
+        onPressed: () => obdData.fetchDtcs(),
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.primary,
           foregroundColor: Colors.white,
