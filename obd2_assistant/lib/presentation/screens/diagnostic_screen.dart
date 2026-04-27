@@ -3,6 +3,7 @@ import '../../core/theme/app_colors.dart';
 import '../widgets/design_system/dtc_card_widget.dart';
 import '../providers/obd_data_provider.dart';
 import '../providers/diagnostic_provider.dart';
+import '../providers/navigation_provider.dart';
 import 'ai_analysis_detail_screen.dart';
 import 'package:provider/provider.dart';
 
@@ -136,13 +137,25 @@ class DiagnosticScreen extends StatelessWidget {
             ),
           ],
         ),
-        IconButton(
-          onPressed: () {},
-          icon: const Icon(Icons.history_rounded, color: AppColors.secondaryText),
-          style: IconButton.styleFrom(
-            backgroundColor: AppColors.surface,
-            shape: const CircleBorder(),
-          ),
+        Row(
+          children: [
+            IconButton(
+              onPressed: () => Provider.of<NavigationProvider>(context, listen: false).setIndex(2),
+              icon: const Icon(Icons.fact_check_rounded, color: AppColors.primary),
+              style: IconButton.styleFrom(
+                backgroundColor: AppColors.surface,
+                shape: const CircleBorder(),
+              ),
+            ),
+            IconButton(
+              onPressed: () {},
+              icon: const Icon(Icons.history_rounded, color: AppColors.secondaryText),
+              style: IconButton.styleFrom(
+                backgroundColor: AppColors.surface,
+                shape: const CircleBorder(),
+              ),
+            ),
+          ],
         ),
       ],
     );

@@ -60,7 +60,7 @@ class HomeDashboardScreen extends StatelessWidget {
                         title: 'Live Trends',
                         subtitle: 'Real-time params',
                         tintColor: AppColors.accent,
-                        onTap: () => Provider.of<NavigationProvider>(context, listen: false).setIndex(2),
+                        onTap: () => Provider.of<NavigationProvider>(context, listen: false).setIndex(3),
                       ),
                     ],
                   ),

@@ -3,6 +3,7 @@ import '../../core/theme/app_colors.dart';
 import 'home_dashboard_screen.dart';
 import 'diagnostic_screen.dart';
 import 'live_data_screen.dart';
+import 'full_diagnostic_screen.dart';
 
 import 'settings_screen.dart';
 import '../providers/bluetooth_provider.dart';
@@ -21,6 +22,7 @@ class _MainScreenState extends State<MainScreen> {
   final List<Widget> _screens = [
     const HomeDashboardScreen(),
     const DiagnosticScreen(),
+    const FullDiagnosticScreen(),
     const LiveDataScreen(),
     const SettingsScreen(),
   ];
@@ -82,6 +84,11 @@ class _MainScreenState extends State<MainScreen> {
               icon: Icon(Icons.medical_services_rounded),
               activeIcon: Icon(Icons.medical_services_rounded),
               label: 'Diagnostic',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.fact_check_rounded),
+              activeIcon: Icon(Icons.fact_check_rounded),
+              label: 'Full Diag',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.show_chart_rounded),

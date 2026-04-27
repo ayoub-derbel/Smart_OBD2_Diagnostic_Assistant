@@ -109,6 +109,65 @@ Vehicle Info (Model or VIN): $carInfo
     }
   }
 
+  Future<String> analyzeFullDiagnosticContext(Map<String, dynamic> context) async {
+    final String systemPrompt = """
+You are an advanced automotive diagnostic engineer.
+You receive complete OBD-II context and must return ONLY valid JSON.
+
+Expected JSON shape:
+{
+  "vehicle_summary": "text",
+  "global_health": "healthy|warning|critical",
+  "issues": [
+    {
+      "title": "Issue title",
+      "severity": "low|medium|high|critical",
+      "probable_cause": "Most probable cause",
+      "recommendation": "Best actionable recommendation"
+    }
+  ],
+  "immediate_actions": ["action 1", "action 2"],
+  "preventive_actions": ["action 1", "action 2"]
+}
+""";
+
+    final String userPrompt = """
+Complete diagnostic context (JSON):
+${jsonEncode(context)}
+""";
+
+    try {
+      final apiKey = await _getApiKey();
+      final response = await _dio.post(
+        'https://api.groq.com/openai/v1/chat/completions',
+        options: Options(
+          headers: {
+            'Authorization': 'Bearer $apiKey',
+            'Content-Type': 'application/json',
+          },
+        ),
+        data: {
+          'model': 'llama-3.3-70b-versatile',
+          'messages': [
+            {'role': 'system', 'content': systemPrompt},
+            {'role': 'user', 'content': userPrompt},
+          ],
+          'temperature': 0.4,
+          'response_format': {'type': 'json_object'},
+        },
+      );
+
+      if (response.statusCode == 200) {
+        return response.data['choices'][0]['message']['content'] as String;
+      }
+      throw Exception('Erreur API Groq: ${response.statusCode}');
+    } on DioException catch (e) {
+      throw Exception('Erreur reseau ou API Groq: ${e.message}');
+    } catch (e) {
+      throw Exception('Erreur inattendue: $e');
+    }
+  }
+
   DiagnosticResult _parseResponse(String responseText) {
     try {
       String jsonStr = responseText;
