@@ -23,7 +23,7 @@ class FullDiagnosticScreen extends StatelessWidget {
                 children: [
                   CircularProgressIndicator(),
                   SizedBox(height: 12),
-                  Text("Collecte et analyse en cours..."),
+                  Text("Collecting and analyzing data..."),
                 ],
               ),
             );
@@ -42,7 +42,7 @@ class FullDiagnosticScreen extends StatelessWidget {
                     const SizedBox(height: 12),
                     ElevatedButton(
                       onPressed: vm.runDiagnostic,
-                      child: const Text("Reessayer"),
+                      child: const Text("Retry"),
                     ),
                   ],
                 ),
@@ -57,22 +57,42 @@ class FullDiagnosticScreen extends StatelessWidget {
               ElevatedButton.icon(
                 onPressed: vm.runDiagnostic,
                 icon: const Icon(Icons.play_arrow_rounded),
-                label: const Text("Lancer Diagnostic complet"),
+                label: const Text("Run Full Diagnostic"),
               ),
               const SizedBox(height: 16),
               if (report == null)
-                const Text("Aucun rapport pour le moment.")
+                const Text("No report available yet.")
               else ...[
                 _SectionCard(
-                  title: "Resume Vehicule",
+                  title: "Identified Vehicle",
+                  child: Text(report.vehicleInfo, style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.primary)),
+                ),
+                _SectionCard(
+                  title: "Summary",
                   child: Text(report.vehicleSummary),
                 ),
                 _SectionCard(
-                  title: "Etat Global",
-                  child: Text(report.globalHealth),
+                  title: "Global Health",
+                  child: _GlobalHealthBadge(health: report.globalHealth),
                 ),
                 _SectionCard(
-                  title: "Problemes Detectes",
+                  title: "Technical Reasoning",
+                  child: Text(report.logicExplanation, style: const TextStyle(fontStyle: FontStyle.italic)),
+                ),
+                if (report.abnormalPids.isNotEmpty)
+                  _SectionCard(
+                    title: "Abnormal Sensors",
+                    child: Column(
+                      children: report.abnormalPids.map((pid) => ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text("${pid.pid}: ${pid.value}"),
+                        subtitle: Text(pid.reason, style: const TextStyle(color: AppColors.error, fontSize: 12)),
+                        leading: const Icon(Icons.warning_amber_rounded, color: AppColors.error),
+                      )).toList(),
+                    ),
+                  ),
+                _SectionCard(
+                  title: "Detected Issues",
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: report.issues
@@ -96,11 +116,11 @@ class FullDiagnosticScreen extends StatelessWidget {
                   ),
                 ),
                 _SectionCard(
-                  title: "Actions Immediates",
+                  title: "Immediate Actions",
                   child: _StringList(items: report.immediateActions),
                 ),
                 _SectionCard(
-                  title: "Actions Preventives",
+                  title: "Preventive Actions",
                   child: _StringList(items: report.preventiveActions),
                 ),
               ]
@@ -147,11 +167,65 @@ class _StringList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (items.isEmpty) {
-      return const Text("Aucune donnee");
+      return const Text("No data");
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: items.map((item) => Text("• $item")).toList(),
+    );
+  }
+}
+
+class _GlobalHealthBadge extends StatelessWidget {
+  final String health;
+  const _GlobalHealthBadge({required this.health});
+
+  @override
+  Widget build(BuildContext context) {
+    Color color;
+    String text;
+    IconData icon;
+
+    switch (health.toLowerCase()) {
+      case "healthy":
+        color = AppColors.success;
+        text = "Healthy";
+        icon = Icons.check_circle_outline;
+        break;
+      case "warning":
+        color = AppColors.accent;
+        text = "Warning";
+        icon = Icons.warning_amber_rounded;
+        break;
+      case "critical":
+        color = AppColors.error;
+        text = "Critical";
+        icon = Icons.dangerous_outlined;
+        break;
+      default:
+        color = AppColors.secondary;
+        text = "Unknown";
+        icon = Icons.help_outline;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 18),
+          const SizedBox(width: 8),
+          Text(
+            text,
+            style: TextStyle(color: color, fontWeight: FontWeight.bold),
+          ),
+        ],
+      ),
     );
   }
 }

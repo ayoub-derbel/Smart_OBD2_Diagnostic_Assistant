@@ -31,4 +31,11 @@ class ObdBluetoothRepositoryImpl implements ObdBluetoothRepository {
   Future<String> sendCommand(String hexCommand) {
     return _datasource.sendCommand(hexCommand);
   }
+
+  @override
+  Stream<Map<String, dynamic>> get logStream => _datasource.logStream.map((log) => {
+    'title': log.title,
+    'detail': log.detail,
+    'isError': log.isError,
+  });
 }

@@ -4,6 +4,7 @@ import 'home_dashboard_screen.dart';
 import 'diagnostic_screen.dart';
 import 'live_data_screen.dart';
 import 'full_diagnostic_screen.dart';
+import 'smart_diagnostic_screen.dart';
 
 import 'settings_screen.dart';
 import '../providers/bluetooth_provider.dart';
@@ -22,7 +23,7 @@ class _MainScreenState extends State<MainScreen> {
   final List<Widget> _screens = [
     const HomeDashboardScreen(),
     const DiagnosticScreen(),
-    const FullDiagnosticScreen(),
+    const SmartDiagnosticScreen(),
     const LiveDataScreen(),
     const SettingsScreen(),
   ];
@@ -86,9 +87,9 @@ class _MainScreenState extends State<MainScreen> {
               label: 'Diagnostic',
             ),
             BottomNavigationBarItem(
-              icon: Icon(Icons.fact_check_rounded),
-              activeIcon: Icon(Icons.fact_check_rounded),
-              label: 'Full Diag',
+              icon: Icon(Icons.auto_awesome_rounded),
+              activeIcon: Icon(Icons.auto_awesome_rounded),
+              label: 'Smart Diag',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.show_chart_rounded),

@@ -10,11 +10,21 @@ class Obd2ServiceImpl implements Obd2Service {
   Future<List<String>> discoverSupportedPids() async {
     final response = await _repository.sendCommand("0100");
     final parts = response.split(" ").where((p) => p.isNotEmpty).toList();
-    if (parts.length < 6 || parts[0] != "41" || parts[1] != "00") {
+    
+    // Find "41 00" in the parts to skip any leading garbage (like "SEARCHING...")
+    int startIndex = -1;
+    for (int i = 0; i < parts.length - 1; i++) {
+      if (parts[i] == "41" && parts[i+1] == "00") {
+        startIndex = i;
+        break;
+      }
+    }
+
+    if (startIndex == -1 || parts.length < startIndex + 6) {
       return [];
     }
 
-    final bytes = parts.sublist(2, 6).map((h) => int.tryParse(h, radix: 16) ?? 0).toList();
+    final bytes = parts.sublist(startIndex + 2, startIndex + 6).map((h) => int.tryParse(h, radix: 16) ?? 0).toList();
     final supported = <String>[];
     int pid = 1;
     for (final byte in bytes) {
@@ -41,15 +51,24 @@ class Obd2ServiceImpl implements Obd2Service {
   @override
   Future<String?> readVin() async {
     final response = await _repository.sendCommand("0902");
-    final parts = response.split(" ");
-    if (parts.length < 4 || parts[0] != "49" || parts[1] != "02") {
-      return null;
+    final parts = response.split(" ").where((p) => p.isNotEmpty).toList();
+    
+    // Skip everything until "49 02"
+    int startIndex = -1;
+    for (int i = 0; i < parts.length - 1; i++) {
+      if (parts[i] == "49" && parts[i+1] == "02") {
+        startIndex = i;
+        break;
+      }
     }
-    final vinCodes = parts.skip(3);
+
+    if (startIndex == -1) return null;
+
+    final vinCodes = parts.skip(startIndex + 3); // Skip 49 02 01 (or similar)
     final vin = vinCodes
         .map((h) => int.tryParse(h, radix: 16))
         .whereType<int>()
-        .where((c) => c > 0)
+        .where((c) => c >= 32 && c <= 126) // Valid ASCII printable chars
         .map((c) => String.fromCharCode(c))
         .join();
     return vin.isEmpty ? null : vin;
@@ -76,12 +95,23 @@ class Obd2ServiceImpl implements Obd2Service {
   }
 
   List<String> _parseDtcs(String response, {required String expectedHeader}) {
-    final parts = response.split(" ");
-    if (parts.length < 3 || parts[0] != expectedHeader) {
+    final parts = response.split(" ").where((p) => p.isNotEmpty).toList();
+    
+    // Find expected header
+    int startIndex = -1;
+    for (int i = 0; i < parts.length; i++) {
+      if (parts[i] == expectedHeader) {
+        startIndex = i;
+        break;
+      }
+    }
+
+    if (startIndex == -1 || parts.length < startIndex + 3) {
       return [];
     }
+    
     final result = <String>[];
-    for (int i = 1; i < parts.length - 1; i += 2) {
+    for (int i = startIndex + 1; i < parts.length - 1; i += 2) {
       final b1 = parts[i];
       final b2 = parts[i + 1];
       if (b1 == "00" && b2 == "00") {

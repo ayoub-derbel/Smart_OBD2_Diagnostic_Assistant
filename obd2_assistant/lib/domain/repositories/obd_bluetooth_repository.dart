@@ -5,4 +5,5 @@ abstract class ObdBluetoothRepository {
   Future<void> connect(String deviceId);
   Future<void> disconnect();
   Future<String> sendCommand(String hexCommand);
+  Stream<Map<String, dynamic>> get logStream;
 }

@@ -45,7 +45,7 @@ class ObdDataProvider extends ChangeNotifier {
       fetchDtcs(),
     ]);
     
-    _timer = Timer.periodic(const Duration(seconds: 2), (timer) async {
+    _timer = Timer.periodic(const Duration(seconds: 3), (timer) async {
       if (isPolling) await fetchLiveData();
     });
   }
@@ -59,34 +59,41 @@ class ObdDataProvider extends ChangeNotifier {
 
   Future<void> fetchLiveData() async {
     try {
+      _addLog("--- Fetching Live Data ---");
+      
       // Fetch RPM
       final rpmRes = await _repository.sendCommand("010C");
-      _addLog("RPM Res: $rpmRes");
+      _addLog("Raw RPM: $rpmRes");
       rpm = _parseRpm(rpmRes);
+      await Future.delayed(const Duration(milliseconds: 100));
 
       // Fetch Speed
       final speedRes = await _repository.sendCommand("010D");
-      _addLog("Speed Res: $speedRes");
+      _addLog("Raw Speed: $speedRes");
       speed = _parseSpeed(speedRes);
+      await Future.delayed(const Duration(milliseconds: 100));
 
       // Fetch MAF
       final mafRes = await _repository.sendCommand("0110");
-      _addLog("MAF Res: $mafRes");
+      _addLog("Raw MAF: $mafRes");
       maf = _parseMaf(mafRes);
+      await Future.delayed(const Duration(milliseconds: 100));
 
       // Fetch Coolant Temp
       final tempRes = await _repository.sendCommand("0105");
-      _addLog("Temp Res: $tempRes");
+      _addLog("Raw Temp: $tempRes");
       coolantTemp = _parseTemp(tempRes);
+      await Future.delayed(const Duration(milliseconds: 100));
 
       // Fetch Engine Load
       final loadRes = await _repository.sendCommand("0104");
-      _addLog("Load Res: $loadRes");
+      _addLog("Raw Load: $loadRes");
       engineLoad = _parsePercent(loadRes);
+      await Future.delayed(const Duration(milliseconds: 100));
 
       // Fetch Battery Voltage
       final battRes = await _repository.sendCommand("ATRV");
-      _addLog("Batt Res: $battRes");
+      _addLog("Raw Battery: $battRes");
       batteryVoltage = _parseVoltage(battRes);
 
       notifyListeners();
@@ -121,10 +128,17 @@ class ObdDataProvider extends ChangeNotifier {
 
   int? _parseRpm(String res) {
     // Expected: "41 0C A B"
-    final parts = res.split(' ');
-    if (parts.length >= 4 && parts[0] == "41" && parts[1] == "0C") {
-      int a = int.parse(parts[2], radix: 16);
-      int b = int.parse(parts[3], radix: 16);
+    final parts = res.split(' ').where((p) => p.isNotEmpty).toList();
+    int idx = -1;
+    for (int i = 0; i < parts.length - 1; i++) {
+      if (parts[i] == "41" && parts[i+1] == "0C") {
+        idx = i;
+        break;
+      }
+    }
+    if (idx != -1 && parts.length >= idx + 4) {
+      int a = int.parse(parts[idx + 2], radix: 16);
+      int b = int.parse(parts[idx + 3], radix: 16);
       return ((a * 256) + b) ~/ 4;
     }
     return rpm;
@@ -132,9 +146,16 @@ class ObdDataProvider extends ChangeNotifier {
 
   int? _parseSpeed(String res) {
     // Expected: "41 0D A"
-    final parts = res.split(' ');
-    if (parts.length >= 3 && parts[0] == "41" && parts[1] == "0D") {
-      return int.parse(parts[2], radix: 16);
+    final parts = res.split(' ').where((p) => p.isNotEmpty).toList();
+    int idx = -1;
+    for (int i = 0; i < parts.length - 1; i++) {
+      if (parts[i] == "41" && parts[i+1] == "0D") {
+        idx = i;
+        break;
+      }
+    }
+    if (idx != -1 && parts.length >= idx + 3) {
+      return int.parse(parts[idx + 2], radix: 16);
     }
     return speed;
   }
@@ -152,13 +173,20 @@ class ObdDataProvider extends ChangeNotifier {
 
   String? _parseVin(String res) {
     // Expected: "49 02 01 <Hex bytes...>"
-    final parts = res.split(' ');
-    if (parts.length > 3 && parts[0] == "49" && parts[1] == "02") {
+    final parts = res.split(' ').where((p) => p.isNotEmpty).toList();
+    int idx = -1;
+    for (int i = 0; i < parts.length - 1; i++) {
+      if (parts[i] == "49" && parts[i+1] == "02") {
+        idx = i;
+        break;
+      }
+    }
+    if (idx != -1 && parts.length > idx + 3) {
       String vinStr = "";
-      for (int i = 3; i < parts.length; i++) {
+      for (int i = idx + 3; i < parts.length; i++) {
         if (parts[i].length == 2) {
           int code = int.parse(parts[i], radix: 16);
-          if (code > 0) vinStr += String.fromCharCode(code);
+          if (code >= 32 && code <= 126) vinStr += String.fromCharCode(code);
         }
       }
       return vinStr.isNotEmpty ? vinStr : vin;

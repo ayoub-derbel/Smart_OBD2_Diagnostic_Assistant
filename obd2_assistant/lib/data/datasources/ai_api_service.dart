@@ -3,6 +3,14 @@ import 'package:dio/dio.dart';
 import '../../domain/entities/diagnostic_result.dart';
 import 'package:firebase_remote_config/firebase_remote_config.dart';
 
+class AiChatResult {
+  final String? text;
+  final bool wantsToScan;
+  final dynamic toolCallData;
+
+  AiChatResult({this.text, this.wantsToScan = false, this.toolCallData});
+}
+
 class AiApiService {
   final Dio _dio = Dio();
 
@@ -109,60 +117,110 @@ Vehicle Info (Model or VIN): $carInfo
     }
   }
 
-  Future<String> analyzeFullDiagnosticContext(Map<String, dynamic> context) async {
+  /// Un seul prompt pour tout gérer : Diagnostic initial et conversation continue
+  Future<AiChatResult> chatWithUnifiedContext({
+    required List<Map<String, dynamic>> history,
+    Map<String, dynamic>? diagnosticContext,
+    bool isDiagnosticReport = false,
+    String scanHistoryPrompt = '',
+  }) async {
     final String systemPrompt = """
-You are an advanced automotive diagnostic engineer.
-You receive complete OBD-II context and must return ONLY valid JSON.
+Expert OBD-II diagnostic system. Mission: help drivers understand issues, find root causes, get repair steps.
 
-Expected JSON shape:
-{
-  "vehicle_summary": "text",
-  "global_health": "healthy|warning|critical",
-  "issues": [
-    {
-      "title": "Issue title",
-      "severity": "low|medium|high|critical",
-      "probable_cause": "Most probable cause",
-      "recommendation": "Best actionable recommendation"
-    }
-  ],
-  "immediate_actions": ["action 1", "action 2"],
-  "preventive_actions": ["action 1", "action 2"]
-}
-""";
+CRITICAL OFF-TOPIC RULE: You are ONLY allowed to answer questions related to automotive diagnostics, vehicle health, OBD-II systems, or general car repair. If the user asks an off-topic question (such as recipes, food, calories in peanut butter, sports, history, coding, or general knowledge), you MUST politely refuse to answer and redirect them back to their vehicle's health (in their language). Do not answer any part of their off-topic query.
 
-    final String userPrompt = """
-Complete diagnostic context (JSON):
-${jsonEncode(context)}
+Rules: Cite evidence (DTC+PID) for every conclusion. Translate codes to plain language (e.g. P0171 = engine running lean). Safety first. Reply in user's language. Be concise.
+${isDiagnosticReport ? """
+Output format:
+1. SAFETY: [Safe / Caution / Do not drive]
+2. ISSUE: [Plain language, 2 sentences max]
+3. ROOT CAUSE: [Cause] — Evidence: [DTC+PID proof] — Ruled out: [what it's not]
+4. REPAIR: →Step1 →Step2 →Step3
+5. URGENCY: [Now / This week / Next service]"""
+: """
+Conversation mode:
+CRITICAL: Do NOT use the 5-point numbered template (SAFETY, ISSUE, ROOT CAUSE, etc.). Answer the user's question naturally and conversationally in 3-4 sentences max. Base every answer on the scan data. Don't repeat the full report. If asked about costs, give realistic ranges."""}
+$scanHistoryPrompt
+Vehicle data: ${diagnosticContext != null ? jsonEncode(diagnosticContext) : "No data yet."}
 """;
 
     try {
       final apiKey = await _getApiKey();
+      
+      // Build the list of messages sent to the model
+      final List<Map<String, dynamic>> apiMessages = [
+        {'role': 'system', 'content': systemPrompt},
+        ...history,
+      ];
+
+      // If we are in conversation mode, adjust the messages to avoid re‑using the 5‑point report
+      if (!isDiagnosticReport) {
+        // Replace any previous assistant message that contains the 5‑point template
+        for (int i = 0; i < apiMessages.length; i++) {
+          final msg = apiMessages[i];
+          if (msg['role'] == 'assistant' &&
+              (msg['content'] as String?)?.contains('1. SAFETY') == true) {
+            apiMessages[i] = {
+              'role': 'assistant',
+              'content': 'Previous diagnostic report already generated.',
+            };
+          }
+        }
+        // Add explicit reminder to force conversational style
+        apiMessages.add({
+          'role': 'system',
+          'content': 'IMPORTANT REMINDER: You are in CONVERSATION MODE. Do NOT use the 5‑point numbered template. Answer naturally in 3‑4 sentences.',
+        });
+      }
+
+      final Map<String, dynamic> requestBody = {
+        'model': 'llama-3.3-70b-versatile',
+        'messages': apiMessages,
+        'temperature': 0.6,
+      };
+
+      // If this is a diagnostic report, prevent tool calls to avoid recursion
+      if (!isDiagnosticReport) {
+        requestBody['tools'] = [
+          {
+            'type': 'function',
+            'function': {
+              'name': 'run_obd_scan',
+              'description': 'Exécute un scan OBD-II physique pour lire les codes d\'erreur et les capteurs. N\'utilisez cet outil QUE si l\'utilisateur demande explicitement un nouveau diagnostic, veut scanner sa voiture ou si aucune donnée de scan n\'est présente. Ne l\'utilisez pas pour répondre à des questions simples sur un diagnostic existant.',
+            }
+          },
+        ];
+      }
+
       final response = await _dio.post(
         'https://api.groq.com/openai/v1/chat/completions',
-        options: Options(
-          headers: {
-            'Authorization': 'Bearer $apiKey',
-            'Content-Type': 'application/json',
-          },
-        ),
-        data: {
-          'model': 'llama-3.3-70b-versatile',
-          'messages': [
-            {'role': 'system', 'content': systemPrompt},
-            {'role': 'user', 'content': userPrompt},
-          ],
-          'temperature': 0.4,
-          'response_format': {'type': 'json_object'},
-        },
+        options: Options(headers: {
+          'Authorization': 'Bearer $apiKey',
+          'Content-Type': 'application/json',
+        }),
+        data: requestBody,
       );
 
       if (response.statusCode == 200) {
-        return response.data['choices'][0]['message']['content'] as String;
+        final choice = response.data['choices'][0];
+        final message = choice['message'];
+        if (choice['finish_reason'] == 'tool_calls' || message['tool_calls'] != null) {
+          return AiChatResult(
+            wantsToScan: true,
+            toolCallData: message['tool_calls'],
+          );
+        }
+        final content = message['content'] as String? ?? '';
+        final cleanedContent = content
+            .replaceAll(RegExp(r'<function=.*?>\<\/function\>'), '')
+            .replaceAll(RegExp(r'<tool_call>.*?<\/tool_call>', dotAll: true),
+                '')
+            .trim();
+        return AiChatResult(text: cleanedContent);
       }
       throw Exception('Erreur API Groq: ${response.statusCode}');
     } on DioException catch (e) {
-      throw Exception('Erreur reseau ou API Groq: ${e.message}');
+      throw Exception('Erreur réseau ou API Groq: ${e.message}');
     } catch (e) {
       throw Exception('Erreur inattendue: $e');
     }
