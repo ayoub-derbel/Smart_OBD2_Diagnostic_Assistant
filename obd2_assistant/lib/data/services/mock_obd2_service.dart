@@ -4,22 +4,24 @@ class MockObd2Service implements Obd2Service {
   @override
   Future<List<String>> discoverSupportedPids() async {
     await Future.delayed(const Duration(milliseconds: 500));
-    return ["01", "04", "05", "0C", "0D", "10", "11"];
+    return [
+      "0100", "0101", "0104", "0105", "010C", "010D", "010E", "010F", "0110", "0111", "0115", "011C"
+    ];
   }
 
   @override
   Future<Map<String, List<String>>> readAllDTCs() async {
     await Future.delayed(const Duration(milliseconds: 800));
     return {
-      "stored": ["P0171", "P0300"],
-      "pending": ["P0171"],
+      "stored": ["P0301", "P0300"],
+      "pending": ["P0301"],
     };
   }
 
   @override
   Future<String?> readVin() async {
     await Future.delayed(const Duration(milliseconds: 400));
-    return "1NXBR32E14Z123456";
+    return "1FM5K8GC8LGA00001";
   }
 
   @override
@@ -27,10 +29,15 @@ class MockObd2Service implements Obd2Service {
     await Future.delayed(const Duration(milliseconds: 600));
     return [
       {
-        "DTC": "P0171",
-        "Engine RPM": "750 RPM",
-        "Coolant Temp": "92°C",
-        "Short Term Fuel Trim": "+15.6%",
+        "DTCFRZF": "P0301",
+        "FUELSYS1": "CL",
+        "LOAD_PCT": "78.4",
+        "ETC": "104",
+        "SHRTFT1": "14.8",
+        "LONGFT1": "18.2",
+        "MAP": "98.0",
+        "RPM": "2850",
+        "VSS": "85"
       }
     ];
   }
@@ -39,10 +46,14 @@ class MockObd2Service implements Obd2Service {
   Future<Map<String, String>> readMultiplePids(List<String> pids) async {
     await Future.delayed(const Duration(milliseconds: 1000));
     return {
-      "05": "94", // Coolant Temp
-      "0C": "750", // RPM
-      "10": "1.8", // MAF
-      "06": "14.8", // STFT
+      "ENGINE_LOAD": "78.4 %",
+      "COOLANT_TEMP": "104 °C",
+      "SHORT_TERM_FUEL_TRIM_1": "14.8 %",
+      "LONG_TERM_FUEL_TRIM_1": "18.2 %",
+      "ENGINE_RPM": "2850 RPM",
+      "VEHICLE_SPEED": "85 km/h",
+      "MAF_FLOW": "42.5 g/s",
+      "THROTTLE_POS": "45.0 %"
     };
   }
 }

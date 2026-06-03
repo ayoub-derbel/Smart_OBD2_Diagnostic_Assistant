@@ -1,47 +1,44 @@
+import 'dart:convert';
+
 enum MessageRole { user, assistant, system, tool }
 
 class ChatMessage {
+  final String? sessionId;
   final MessageRole role;
   final String? content;
   final DateTime timestamp;
-  
-  // Nouveaux champs pour le Function Calling
-  final List<dynamic>? toolCalls; // Pour l'assistant qui demande l'outil
-  final String? toolCallId;       // Pour le tool qui répond
-  final String? name;             // Pour identifier le tool
 
   ChatMessage({
+    this.sessionId,
     required this.role,
     this.content,
-    this.toolCalls,
-    this.toolCallId,
-    this.name,
     DateTime? timestamp,
   }) : timestamp = timestamp ?? DateTime.now();
 
-  Map<String, dynamic> toApiJson() {
-    final map = <String, dynamic>{
-      'role': role.name,
-    };
-    
-    // Pour un message tool, le content doit toujours être une chaîne, même vide
-    if (content != null || role == MessageRole.tool) {
-      map['content'] = content ?? "";
-    } else {
-      map['content'] = null; // Important pour l'assistant qui appelle l'outil (content doit être null)
-    }
+  Map<String, dynamic> toJson() => {
+    'sessionId': sessionId,
+    'role': role.name,
+    'content': content,
+    'createdAt': timestamp.toIso8601String(),
+  };
 
-    if (toolCalls != null && toolCalls!.isNotEmpty) {
-      map['tool_calls'] = toolCalls;
-    }
-    if (toolCallId != null) {
-      map['tool_call_id'] = toolCallId;
-    }
-    if (name != null) {
-      map['name'] = name;
-    }
+  String encode() => jsonEncode(toJson());
 
-    return map;
-  }
+  factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
+    sessionId: json['sessionId']?.toString(),
+    role: MessageRole.values.firstWhere(
+      (role) => role.name == json['role'],
+      orElse: () => MessageRole.assistant,
+    ),
+    content: json['content']?.toString(),
+    timestamp: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
+  );
+
+  static ChatMessage decode(String source) =>
+      ChatMessage.fromJson(jsonDecode(source));
+
+  Map<String, dynamic> toApiJson() => {
+    'role': role.name,
+    'content': content ?? '',
+  };
 }
-

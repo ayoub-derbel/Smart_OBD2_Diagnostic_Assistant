@@ -1,47 +1,73 @@
-class FullDiagnosticIssue {
-  final String title;
-  final String severity;
-  final String probableCause;
-  final String recommendation;
+class DiagnosticOverview {
+  final String status;
+  final String summary;
+  final String primaryProblem;
 
-  FullDiagnosticIssue({
-    required this.title,
-    required this.severity,
-    required this.probableCause,
-    required this.recommendation,
+  DiagnosticOverview({
+    required this.status,
+    required this.summary,
+    required this.primaryProblem,
   });
 }
 
-class AbnormalPid {
-  final String pid;
-  final String value;
-  final String reason;
+class DiagnosticProblem {
+  final String title;
+  final String severity;
+  final String description;
 
-  AbnormalPid({
-    required this.pid,
-    required this.value,
-    required this.reason,
+  DiagnosticProblem({
+    required this.title,
+    required this.severity,
+    required this.description,
+  });
+}
+
+class DiagnosticCause {
+  final String cause;
+  final String probability;
+  final String evidence;
+
+  DiagnosticCause({
+    required this.cause,
+    required this.probability,
+    required this.evidence,
+  });
+}
+
+class RepairStep {
+  final int stepNumber;
+  final String action;
+  final String type;
+
+  RepairStep({
+    required this.stepNumber,
+    required this.action,
+    required this.type,
+  });
+}
+
+class RepairPlan {
+  final String urgency;
+  final List<RepairStep> steps;
+  final String estimatedDifficulty;
+
+  RepairPlan({
+    required this.urgency,
+    required this.steps,
+    required this.estimatedDifficulty,
   });
 }
 
 class FullDiagnosticReport {
-  final String vehicleInfo;
-  final String vehicleSummary;
-  final String globalHealth;
-  final String logicExplanation;
-  final List<AbnormalPid> abnormalPids;
-  final List<FullDiagnosticIssue> issues;
-  final List<String> immediateActions;
-  final List<String> preventiveActions;
+  final DiagnosticOverview overview;
+  final List<DiagnosticProblem> problems;
+  final List<DiagnosticCause> causes;
+  final RepairPlan repairPlan;
 
   FullDiagnosticReport({
-    required this.vehicleInfo,
-    required this.vehicleSummary,
-    required this.globalHealth,
-    required this.logicExplanation,
-    required this.abnormalPids,
-    required this.issues,
-    required this.immediateActions,
-    required this.preventiveActions,
+    required this.overview,
+    required this.problems,
+    required this.causes,
+    required this.repairPlan,
   });
 }

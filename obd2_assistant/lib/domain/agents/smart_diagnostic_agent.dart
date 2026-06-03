@@ -1,10 +1,12 @@
 import 'dart:convert';
+
 import '../../data/datasources/ai_api_service.dart';
 import '../../data/services/obd2_service.dart';
-import '../entities/full_diagnostic_report.dart';
 import '../entities/chat_message.dart';
+import '../entities/diagnostic_session.dart';
 import '../entities/scan_record.dart';
 import '../repositories/chat_history_repository.dart';
+import '../repositories/diagnostic_session_repository.dart';
 import '../repositories/scan_history_repository.dart';
 
 class SmartDiagnosticAgent {
@@ -12,58 +14,177 @@ class SmartDiagnosticAgent {
   final AiApiService _aiApiService;
   final ChatHistoryRepository _historyRepo;
   final ScanHistoryRepository _scanHistoryRepo;
-  
-  // Internal state
-  Map<String, dynamic>? _lastScanContext;
+  final DiagnosticSessionRepository _sessionRepo;
 
-  SmartDiagnosticAgent(this._obd2Service, this._aiApiService, this._historyRepo, this._scanHistoryRepo);
+  DiagnosticSession? _activeSession;
 
-  Future<List<ChatMessage>> get chatHistory => _historyRepo.getMessages();
-  Map<String, dynamic>? get lastScanContext => _lastScanContext;
+  SmartDiagnosticAgent(
+    this._obd2Service,
+    this._aiApiService,
+    this._historyRepo,
+    this._scanHistoryRepo,
+    this._sessionRepo,
+  );
 
-  /// Récupère l'historique des scans pour injection dans le prompt
+  Future<List<ChatMessage>> get chatHistory async {
+    final session = await _getActiveSession();
+    if (session == null) return const [];
+    return _historyRepo.getMessages(session.id);
+  }
+
+  Map<String, dynamic>? get lastScanContext => _activeSession?.diagnosticContext;
+
+  Future<DiagnosticSession?> getActiveSession() => _getActiveSession();
+
+  Future<void> clearHistory() async {
+    final session = await _getActiveSession();
+    if (session != null) {
+      await _historyRepo.clearSession(session.id);
+    }
+    await _sessionRepo.clearActiveSession();
+    _activeSession = null;
+  }
+
   Future<String> _buildScanHistoryPrompt() async {
     final recentScans = await _scanHistoryRepo.getRecentScans(limit: 3);
     if (recentScans.isEmpty) return '';
-    
-    final summaries = recentScans.map((s) => s.toPromptSummary()).join('\n');
-    return '\n\nVEHICLE DIAGNOSTIC HISTORY (last ${recentScans.length} scans):\n$summaries\n\nUse this history to detect recurring issues, trends, or improvements since the last scan.';
+    return recentScans.map((scan) => scan.toPromptSummary()).join('\n');
   }
 
-  /// Sauvegarde un scan dans l'historique persistant
-  Future<void> _saveScanRecord(String aiResponse) async {
-    if (_lastScanContext == null) return;
-
-    // Extraire safety, issue, urgency du rapport IA
-    final safety = _extractField(aiResponse, r'(?:SAFETY|SÉCURITÉ|SECURITE).*?:\s*(.*?)(?=\n|$)');
-    final issue = _extractField(aiResponse, r'(?:ISSUE|PROBLÈME|PROBLEME).*?:\s*(.*?)(?=\n|$)');
-    final urgency = _extractField(aiResponse, r'(?:URGENCY|URGENCE).*?:\s*(.*?)(?=\n|$)');
-
+  Future<void> _saveScanRecord(DiagnosticSession session) async {
     final record = ScanRecord(
-      id: 'scan_${DateTime.now().millisecondsSinceEpoch}',
-      date: DateTime.now(),
-      storedDtcs: List<String>.from(_lastScanContext!['stored_dtcs'] ?? []),
-      pendingDtcs: List<String>.from(_lastScanContext!['pending_dtcs'] ?? []),
-      vin: _lastScanContext!['vin']?.toString(),
-      safety: safety,
-      issue: issue,
-      urgency: urgency,
-      aiSummary: aiResponse.length > 500 ? aiResponse.substring(0, 500) : aiResponse,
-      liveDataSnapshot: Map<String, String>.from(
-        (_lastScanContext!['pid_values_raw'] as Map?)?.map((k, v) => MapEntry(k.toString(), v.toString())) ?? {}
-      ),
+      id: session.id,
+      date: session.createdAt,
+      storedDtcs: session.scan.storedDtcs,
+      pendingDtcs: session.scan.pendingDtcs,
+      vin: session.scan.vin,
+      safety: session.report.safety,
+      issue: session.report.issue,
+      urgency: session.report.urgency,
+      aiSummary: session.report.summary,
+      liveDataSnapshot: session.scan.pidValues,
     );
 
     await _scanHistoryRepo.saveScan(record);
   }
 
-  String _extractField(String text, String pattern) {
-    final match = RegExp(pattern, caseSensitive: false).firstMatch(text);
-    return match?.group(1)?.replaceAll('**', '').replaceAll('*', '').trim() ?? '';
+  DiagnosticSessionReport _buildSessionReport(String aiResponse) {
+    final reportFields = _extractReportFields(aiResponse);
+    final fallbackSummary = aiResponse.length > 500
+        ? aiResponse.substring(0, 500)
+        : aiResponse;
+
+    return DiagnosticSessionReport(
+      safety: reportFields['safety'] ?? '',
+      issue: reportFields['issue'] ?? '',
+      urgency: reportFields['urgency'] ?? '',
+      summary: reportFields['summary'] ?? fallbackSummary,
+      rawText: aiResponse,
+    );
   }
 
-  /// Effectue le scan OBD physique
-  Future<void> _executeObdScan() async {
+  Map<String, String> _extractReportFields(String aiResponse) {
+    final jsonReport = _tryDecodeJsonMap(aiResponse);
+    if (jsonReport != null) {
+      final safety = _firstString(jsonReport, ['safety', 'safety_status']);
+      final issue = _firstString(jsonReport, ['issue', 'main_issue']);
+      final urgency = _firstString(jsonReport, ['urgency']);
+      final causes = _extractCauseNames(
+        jsonReport['causes'] ?? jsonReport['probable_causes'],
+      );
+
+      final summaryParts = [
+        if (safety.isNotEmpty) 'safety=$safety',
+        if (issue.isNotEmpty) 'issue=$issue',
+        if (urgency.isNotEmpty) 'urgency=$urgency',
+        if (causes.isNotEmpty) 'causes=${causes.take(3).join(",")}',
+      ];
+
+      return {
+        'safety': safety,
+        'issue': issue,
+        'urgency': urgency,
+        if (summaryParts.isNotEmpty) 'summary': summaryParts.join('; '),
+      };
+    }
+
+    final safety = _extractField(
+      aiResponse,
+      r'(?:SAFETY|SECURITE).*?:\s*(.*?)(?=\n|$)',
+    );
+    final issue = _extractField(
+      aiResponse,
+      r'(?:ISSUE|PROBLEME).*?:\s*(.*?)(?=\n|$)',
+    );
+    final urgency = _extractField(
+      aiResponse,
+      r'(?:URGENCY|URGENCE).*?:\s*(.*?)(?=\n|$)',
+    );
+
+    return {'safety': safety, 'issue': issue, 'urgency': urgency};
+  }
+
+  String _extractField(String text, String pattern) {
+    final match = RegExp(
+      pattern,
+      caseSensitive: false,
+      dotAll: true,
+    ).firstMatch(text);
+    return match?.group(1)?.replaceAll('**', '').replaceAll('*', '').trim() ??
+        '';
+  }
+
+  Map<String, dynamic>? _tryDecodeJsonMap(String content) {
+    try {
+      var jsonText = content.trim();
+      if (jsonText.contains('```json')) {
+        final start = jsonText.indexOf('```json') + 7;
+        final end = jsonText.lastIndexOf('```');
+        if (end > start) jsonText = jsonText.substring(start, end).trim();
+      } else if (jsonText.contains('{')) {
+        final start = jsonText.indexOf('{');
+        final end = jsonText.lastIndexOf('}');
+        if (end > start) jsonText = jsonText.substring(start, end + 1).trim();
+      }
+
+      final decoded = jsonDecode(jsonText);
+      if (decoded is Map<String, dynamic>) return decoded;
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    } catch (_) {
+      return null;
+    }
+    return null;
+  }
+
+  String _firstString(Map<String, dynamic> json, List<String> keys) {
+    for (final key in keys) {
+      final value = json[key];
+      if (value != null && value.toString().trim().isNotEmpty) {
+        return value.toString().trim();
+      }
+    }
+    return '';
+  }
+
+  List<String> _extractCauseNames(dynamic value) {
+    if (value is! Iterable) return const [];
+    return value
+        .map((item) {
+          if (item is Map) {
+            return (item['cause'] ??
+                    item['title'] ??
+                    item['probable_cause'] ??
+                    '')
+                .toString()
+                .trim();
+          }
+          return item.toString().trim();
+        })
+        .where((item) => item.isNotEmpty)
+        .toList();
+  }
+
+  Future<ScanSnapshot> _executeObdScan() async {
     final supportedPids = await _obd2Service.discoverSupportedPids();
     final dtcs = await _obd2Service.readAllDTCs();
     final vin = await _obd2Service.readVin();
@@ -72,159 +193,110 @@ class SmartDiagnosticAgent {
     final pidsToRead = supportedPids.take(15).toList();
     final pidValues = await _obd2Service.readMultiplePids(pidsToRead);
 
-    _lastScanContext = {
-      "vin": vin,
-      "supported_pids": supportedPids,
-      "stored_dtcs": dtcs["stored"] ?? [],
-      "pending_dtcs": dtcs["pending"] ?? [],
-      "freeze_frames": freezeFrames,
-      "pid_values_raw": pidValues,
-    };
+    return ScanSnapshot(
+      vin: vin,
+      supportedPids: supportedPids,
+      storedDtcs: dtcs['stored'] ?? const <String>[],
+      pendingDtcs: dtcs['pending'] ?? const <String>[],
+      freezeFrames: freezeFrames,
+      pidValues: pidValues,
+    );
   }
 
-  /// Appelé directement depuis le bouton (Bypass du Function Calling)
-  Future<void> performFullScan() async {
-    await _executeObdScan();
+  Future<String> performFullScan() async {
+    final previousSession = await _getActiveSession();
+    if (previousSession != null) {
+      await _historyRepo.clearSession(previousSession.id);
+    }
 
-    // On n'efface PLUS l'historique ! On ajoute simplement l'intention
-    await _historyRepo.saveMessage(ChatMessage(
-      role: MessageRole.user,
-      content: "Faire un Diagnostic complet",
-    ));
-
-    final history = await _historyRepo.getMessages();
+    final scan = await _executeObdScan();
+    final diagnosticContext = scan.toDiagnosticContext();
     final scanHistoryPrompt = await _buildScanHistoryPrompt();
-    
+
     final response = await _aiApiService.chatWithUnifiedContext(
-      history: history.map((m) => m.toApiJson()).toList(),
-      diagnosticContext: _lastScanContext,
+      history: [
+        {'role': 'user', 'content': 'Faire un Diagnostic complet'},
+      ],
+      diagnosticContext: diagnosticContext,
       isDiagnosticReport: true,
       scanHistoryPrompt: scanHistoryPrompt,
     );
 
-    final aiText = response.text ?? "Erreur de génération du rapport.";
-    
-    await _historyRepo.saveMessage(ChatMessage(
-      role: MessageRole.assistant,
-      content: aiText,
-    ));
+    final aiText = response.text ?? 'Erreur de generation du rapport.';
+    final now = DateTime.now();
+    final session = DiagnosticSession(
+      id: 'session_${now.millisecondsSinceEpoch}',
+      createdAt: now,
+      scan: scan,
+      report: _buildSessionReport(aiText),
+    );
 
-    // Sauvegarder ce scan dans l'historique persistant
-    await _saveScanRecord(aiText);
+    _activeSession = session;
+    await _sessionRepo.saveActiveSession(session);
+    await _historyRepo.clearSession(session.id);
+
+    await _saveScanRecord(session);
+    return aiText;
   }
 
-  /// Appelé depuis le champ de texte (Gère le Function Calling)
   Future<String> askQuestion(String question) async {
-    await _historyRepo.saveMessage(ChatMessage(role: MessageRole.user, content: question));
-
-    // Build apiHistory from stored messages
-    final history = await _historyRepo.getMessages();
-    final apiHistory = history.map((m) => m.toApiJson()).toList();
-
-    final scanHistoryPrompt = await _buildScanHistoryPrompt();
-
     try {
-      final response = await _aiApiService.chatWithUnifiedContext(
-        history: apiHistory,
-        diagnosticContext: _lastScanContext,
-        isDiagnosticReport: false,
-        scanHistoryPrompt: scanHistoryPrompt,
-      );
-
-
-      // Si l'IA décide d'utiliser l'outil (Function Calling)
-      if (response.wantsToScan) {
-        final toolCall = response.toolCallData[0];
-        final toolCallId = toolCall['id'];
-        final toolName = toolCall['function']['name'];
-
-        // 1. Sauvegarder la demande de l'assistant dans l'historique
-        await _historyRepo.saveMessage(ChatMessage(
-          role: MessageRole.assistant,
-          toolCalls: response.toolCallData,
-        ));
-
-        // 2. Exécuter l'outil (Scan OBD)
-        await _executeObdScan();
-
-        // 3. Sauvegarder le résultat de l'outil dans l'historique
-        await _historyRepo.saveMessage(ChatMessage(
-          role: MessageRole.tool,
-          toolCallId: toolCallId,
-          name: toolName,
-          content: jsonEncode(_lastScanContext),
-        ));
-
-        // 4. Deuxième appel à l'API pour générer le rapport final
-        final historyAfterTool = await _historyRepo.getMessages();
-        final finalResponse = await _aiApiService.chatWithUnifiedContext(
-          history: historyAfterTool.map((m) => m.toApiJson()).toList(),
-          diagnosticContext: _lastScanContext,
-          isDiagnosticReport: true,
-          scanHistoryPrompt: scanHistoryPrompt,
-        );
-
-        final aiText = finalResponse.text ?? "Diagnostic terminé.";
-
-        await _historyRepo.saveMessage(ChatMessage(
-          role: MessageRole.assistant, 
-          content: aiText,
-        ));
-
-        // Sauvegarder ce scan dans l'historique persistant
-        await _saveScanRecord(aiText);
-
-        return aiText;
+      final session = await _getActiveSession();
+      if (session == null) {
+        const missingSessionMessage =
+            "Aucun diagnostic actif n'est disponible. Lancez d'abord un diagnostic complet depuis l'interface, puis posez vos questions sur ce scan.";
+        return missingSessionMessage;
       }
 
-      // Si l'IA répond normalement par du texte
-      await _historyRepo.saveMessage(ChatMessage(
-        role: MessageRole.assistant, 
-        content: response.text ?? ""
-      ));
-      return response.text ?? "";
-      
+      await _historyRepo.saveMessage(
+        sessionId: session.id,
+        message: ChatMessage(
+          sessionId: session.id,
+          role: MessageRole.user,
+          content: question,
+        ),
+      );
+
+      final response = await _aiApiService.chatWithUnifiedContext(
+        history: [
+          {'role': 'user', 'content': question},
+        ],
+        diagnosticContext: session.diagnosticContext,
+        isDiagnosticReport: false,
+      );
+
+      final answer = response.text?.trim().isNotEmpty == true
+          ? response.text!.trim()
+          : "Je n'ai pas pu generer de reponse a partir du diagnostic actif.";
+      await _historyRepo.saveMessage(
+        sessionId: session.id,
+        message: ChatMessage(
+          sessionId: session.id,
+          role: MessageRole.assistant,
+          content: answer,
+        ),
+      );
+      return answer;
     } catch (e) {
-      final errorMsg = "Désolé, j'ai rencontré une erreur : $e";
-      await _historyRepo.saveMessage(ChatMessage(role: MessageRole.assistant, content: errorMsg));
+      final errorMsg = "Desole, j'ai rencontre une erreur : $e";
+      final session = await _getActiveSession();
+      if (session != null) {
+        await _historyRepo.saveMessage(
+          sessionId: session.id,
+          message: ChatMessage(
+            sessionId: session.id,
+            role: MessageRole.assistant,
+            content: errorMsg,
+          ),
+        );
+      }
       return errorMsg;
     }
   }
 
-
-  FullDiagnosticReport _parseReport(String jsonText) {
-    final map = jsonDecode(jsonText) as Map<String, dynamic>;
-    final issuesRaw = map["issues"] as List<dynamic>? ?? [];
-    final pidsRaw = map["abnormal_pids"] as List<dynamic>? ?? [];
-
-    return FullDiagnosticReport(
-      vehicleInfo: map["vehicle_info"]?.toString() ?? "Unknown",
-      vehicleSummary: map["vehicle_summary"]?.toString() ?? "Summary unavailable",
-      globalHealth: map["global_health"]?.toString() ?? "unknown",
-      logicExplanation: map["logic_explanation"]?.toString() ?? "No technical explanation provided.",
-      abnormalPids: pidsRaw.map((e) {
-        final pid = e as Map<String, dynamic>;
-        return AbnormalPid(
-          pid: pid["pid"]?.toString() ?? "Unknown PID",
-          value: pid["value"]?.toString() ?? "N/A",
-          reason: pid["reason"]?.toString() ?? "Abnormal value detected",
-        );
-      }).toList(),
-      issues: issuesRaw.map((e) {
-        final issue = e as Map<String, dynamic>;
-        return FullDiagnosticIssue(
-          title: issue["title"]?.toString() ?? "Issue",
-          severity: issue["severity"]?.toString() ?? "medium",
-          probableCause: issue["probable_cause"]?.toString() ?? "Cause not specified",
-          recommendation: issue["recommendation"]?.toString() ?? "No recommendation",
-        );
-      }).toList(),
-      immediateActions: (map["immediate_actions"] as List<dynamic>? ?? [])
-          .map((e) => e.toString())
-          .toList(),
-      preventiveActions: (map["preventive_actions"] as List<dynamic>? ?? [])
-          .map((e) => e.toString())
-          .toList(),
-    );
+  Future<DiagnosticSession?> _getActiveSession() async {
+    if (_activeSession != null) return _activeSession;
+    _activeSession = await _sessionRepo.getActiveSession();
+    return _activeSession;
   }
 }

@@ -5,10 +5,11 @@ import '../widgets/design_system/action_card_widget.dart';
 import '../providers/obd_data_provider.dart';
 import '../providers/bluetooth_provider.dart';
 import '../providers/navigation_provider.dart';
+import 'elm_connection_screen.dart';
 import 'package:provider/provider.dart';
 
 class HomeDashboardScreen extends StatelessWidget {
-  const HomeDashboardScreen({Key? key}) : super(key: key);
+  const HomeDashboardScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -25,16 +26,20 @@ class HomeDashboardScreen extends StatelessWidget {
                   const SizedBox(height: AppSpacing.md),
                   // Header
                   _buildHeader(context),
+                  const SizedBox(height: AppSpacing.md),
+
+                  // ELM connection entry point
+                  _buildConnectionButton(context),
                   const SizedBox(height: AppSpacing.xl),
-                  
+
                   // VIN Display
                   _buildVinCard(context, obdData.vin),
                   const SizedBox(height: AppSpacing.lg),
-                  
+
                   // Central Fault Indicator
                   _buildFaultIndicator(context, obdData),
                   const SizedBox(height: AppSpacing.xl),
-                  
+
                   // Telemetry Grid
                   Text(
                     'Telemetry Dashboard',
@@ -43,7 +48,7 @@ class HomeDashboardScreen extends StatelessWidget {
                   const SizedBox(height: AppSpacing.md),
                   _buildSensorGrid(obdData),
                   const SizedBox(height: AppSpacing.xl),
-                  
+
                   // Navigation Cards
                   Row(
                     children: [
@@ -52,7 +57,10 @@ class HomeDashboardScreen extends StatelessWidget {
                         title: 'Scan DTCs',
                         subtitle: 'View fault list',
                         tintColor: AppColors.primary,
-                        onTap: () => Provider.of<NavigationProvider>(context, listen: false).setIndex(1),
+                        onTap: () => Provider.of<NavigationProvider>(
+                          context,
+                          listen: false,
+                        ).setIndex(1),
                       ),
                       const SizedBox(width: AppSpacing.md),
                       ActionCardWidget(
@@ -60,12 +68,15 @@ class HomeDashboardScreen extends StatelessWidget {
                         title: 'Live Trends',
                         subtitle: 'Real-time params',
                         tintColor: AppColors.accent,
-                        onTap: () => Provider.of<NavigationProvider>(context, listen: false).setIndex(3),
+                        onTap: () => Provider.of<NavigationProvider>(
+                          context,
+                          listen: false,
+                        ).setIndex(3),
                       ),
                     ],
                   ),
                   const SizedBox(height: AppSpacing.xl),
-                  
+
                   // Protocol Footer
                   _buildProtocolFooter(context),
                   const SizedBox(height: AppSpacing.lg),
@@ -96,26 +107,41 @@ class HomeDashboardScreen extends StatelessWidget {
                 Row(
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
-                        color: (isConnected ? AppColors.success : AppColors.error).withOpacity(0.1),
+                        color:
+                            (isConnected ? AppColors.success : AppColors.error)
+                                .withOpacity(0.1),
                         borderRadius: BorderRadius.circular(AppRadii.sm),
-                        border: Border.all(color: (isConnected ? AppColors.success : AppColors.error).withOpacity(0.2)),
+                        border: Border.all(
+                          color:
+                              (isConnected
+                                      ? AppColors.success
+                                      : AppColors.error)
+                                  .withOpacity(0.2),
+                        ),
                       ),
                       child: Text(
                         isConnected ? 'ELM327 Active' : 'Disconnected',
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              color: isConnected ? AppColors.success : AppColors.error,
-                              fontWeight: FontWeight.bold,
-                            ),
+                          color: isConnected
+                              ? AppColors.success
+                              : AppColors.error,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                     const SizedBox(width: AppSpacing.sm),
                     Text(
-                      isConnected ? btProvider.connectedDevice?.name ?? 'Unknown Device' : 'No connection',
+                      isConnected
+                          ? btProvider.connectedDevice?.name ?? 'Unknown Device'
+                          : 'No connection',
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            color: AppColors.secondaryText,
-                          ),
+                        color: AppColors.secondaryText,
+                      ),
                     ),
                   ],
                 ),
@@ -123,7 +149,10 @@ class HomeDashboardScreen extends StatelessWidget {
             ),
             IconButton(
               onPressed: () {},
-              icon: const Icon(Icons.settings_rounded, color: AppColors.secondaryText),
+              icon: const Icon(
+                Icons.settings_rounded,
+                color: AppColors.secondaryText,
+              ),
               style: IconButton.styleFrom(
                 backgroundColor: AppColors.surface,
                 shape: const CircleBorder(),
@@ -132,7 +161,118 @@ class HomeDashboardScreen extends StatelessWidget {
             ),
           ],
         );
-      }
+      },
+    );
+  }
+
+  Widget _buildConnectionButton(BuildContext context) {
+    return Consumer<BluetoothProvider>(
+      builder: (context, btProvider, _) {
+        final isConnected = btProvider.state == BluetoothState.connected;
+        final isBusy =
+            btProvider.state == BluetoothState.scanning ||
+            btProvider.state == BluetoothState.connecting;
+        final subtitle = isConnected
+            ? btProvider.connectedDevice?.name ?? 'ELM327 connecte'
+            : isBusy
+            ? 'Connexion en cours...'
+            : 'Veuillez d\'abord vous connecter';
+
+        return Material(
+          color: const Color(0xFF14395A),
+          borderRadius: BorderRadius.circular(AppRadii.md),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(AppRadii.md),
+            onTap: () => _openConnectionScreen(context),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md,
+                vertical: AppSpacing.md,
+              ),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(AppRadii.md),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(AppRadii.sm),
+                    ),
+                    child: Icon(
+                      isConnected
+                          ? Icons.check_circle_rounded
+                          : Icons.directions_car_filled_rounded,
+                      color: Colors.white,
+                      size: 28,
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          isConnected ? 'Connecte' : 'Connexion',
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                              ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          subtitle,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                color: Colors.white.withValues(alpha: 0.82),
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (isBusy)
+                    const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  else
+                    const Icon(
+                      Icons.chevron_right_rounded,
+                      color: Colors.white,
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _openConnectionScreen(BuildContext context) {
+    final navigator = Navigator.of(context);
+
+    navigator.push(
+      MaterialPageRoute(
+        builder: (_) => ElmConnectionScreen(
+          showSkip: false,
+          showClose: true,
+          title: 'Connexion',
+          subtitle:
+              'Selectionnez votre adaptateur ELM327 pour lancer le diagnostic.',
+          onSkip: () => navigator.pop(),
+          onConnected: () => navigator.pop(),
+        ),
+      ),
     );
   }
 
@@ -152,7 +292,11 @@ class HomeDashboardScreen extends StatelessWidget {
               color: AppColors.secondary.withOpacity(0.1),
               borderRadius: BorderRadius.circular(AppRadii.md),
             ),
-            child: const Icon(Icons.fingerprint_rounded, color: AppColors.secondary, size: 20),
+            child: const Icon(
+              Icons.fingerprint_rounded,
+              color: AppColors.secondary,
+              size: 20,
+            ),
           ),
           const SizedBox(width: AppSpacing.md),
           Expanded(
@@ -161,16 +305,24 @@ class HomeDashboardScreen extends StatelessWidget {
               children: [
                 Text(
                   'Vehicle Identification Number',
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(color: AppColors.secondaryText),
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: AppColors.secondaryText,
+                  ),
                 ),
                 Text(
                   vin ?? '--- --- --- --- ---',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
                 ),
               ],
             ),
           ),
-          const Icon(Icons.content_copy_rounded, size: 18, color: AppColors.secondaryText),
+          const Icon(
+            Icons.content_copy_rounded,
+            size: 18,
+            color: AppColors.secondaryText,
+          ),
         ],
       ),
     );
@@ -179,7 +331,7 @@ class HomeDashboardScreen extends StatelessWidget {
   Widget _buildFaultIndicator(BuildContext context, ObdDataProvider obdData) {
     int faultCount = obdData.dtcs.length;
     bool hasFaults = faultCount > 0;
-    
+
     return Container(
       padding: const EdgeInsets.all(AppSpacing.lg),
       decoration: BoxDecoration(
@@ -206,36 +358,44 @@ class HomeDashboardScreen extends StatelessWidget {
                   value: hasFaults ? 1.0 : 0.0,
                   strokeWidth: 6,
                   backgroundColor: AppColors.divider,
-                  valueColor: AlwaysStoppedAnimation<Color>(hasFaults ? AppColors.error : AppColors.success),
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    hasFaults ? AppColors.error : AppColors.success,
+                  ),
                 ),
               ),
               Icon(
-                hasFaults ? Icons.warning_rounded : Icons.check_circle_rounded, 
-                color: hasFaults ? AppColors.error : AppColors.success, 
-                size: 32
+                hasFaults ? Icons.warning_rounded : Icons.check_circle_rounded,
+                color: hasFaults ? AppColors.error : AppColors.success,
+                size: 32,
               ),
             ],
           ),
           const SizedBox(width: AppSpacing.lg),
           Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${obdData.vin == null ? "--" : faultCount} Active Faults',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  Text(
-                    obdData.vin == null ? 'Not connected to vehicle' : (hasFaults ? 'DTCs detected in system' : 'All systems clear'),
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${obdData.vin == null ? "--" : faultCount} Active Faults',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                Text(
+                  obdData.vin == null
+                      ? 'Not connected to vehicle'
+                      : (hasFaults
+                            ? 'DTCs detected in system'
+                            : 'All systems clear'),
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
           ),
           OutlinedButton(
             onPressed: () => obdData.fetchDtcs(),
             style: OutlinedButton.styleFrom(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadii.full)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppRadii.full),
+              ),
               padding: const EdgeInsets.symmetric(horizontal: 16),
             ),
             child: const Text('Rescan'),
@@ -259,32 +419,54 @@ class HomeDashboardScreen extends StatelessWidget {
           title: 'Engine Temp',
           value: obdData.coolantTemp?.toString() ?? '---',
           unit: '°C',
-          status: obdData.coolantTemp == null ? 'No Data' : (obdData.coolantTemp! > 100 ? 'Hot' : 'Optimal'),
-          statusColor: obdData.coolantTemp == null ? AppColors.secondaryText : (obdData.coolantTemp! > 100 ? AppColors.error : AppColors.success),
+          status: obdData.coolantTemp == null
+              ? 'No Data'
+              : (obdData.coolantTemp! > 100 ? 'Hot' : 'Optimal'),
+          statusColor: obdData.coolantTemp == null
+              ? AppColors.secondaryText
+              : (obdData.coolantTemp! > 100
+                    ? AppColors.error
+                    : AppColors.success),
         ),
         SensorTileWidget(
           icon: Icons.speed_rounded,
           title: 'RPM',
           value: obdData.rpm?.toString() ?? '---',
           unit: 'rpm',
-          status: obdData.rpm == null ? 'No Data' : (obdData.rpm! > 3000 ? 'High' : 'Normal'),
-          statusColor: obdData.rpm == null ? AppColors.secondaryText : (obdData.rpm! > 3000 ? AppColors.accent : AppColors.success),
+          status: obdData.rpm == null
+              ? 'No Data'
+              : (obdData.rpm! > 3000 ? 'High' : 'Normal'),
+          statusColor: obdData.rpm == null
+              ? AppColors.secondaryText
+              : (obdData.rpm! > 3000 ? AppColors.accent : AppColors.success),
         ),
         SensorTileWidget(
           icon: Icons.battery_charging_full_rounded,
           title: 'Battery',
           value: obdData.batteryVoltage?.toStringAsFixed(1) ?? '---',
           unit: 'V',
-          status: obdData.batteryVoltage == null ? 'No Data' : (obdData.batteryVoltage! < 12.0 ? 'Low' : 'Correct'),
-          statusColor: obdData.batteryVoltage == null ? AppColors.secondaryText : (obdData.batteryVoltage! < 12.0 ? AppColors.error : AppColors.success),
+          status: obdData.batteryVoltage == null
+              ? 'No Data'
+              : (obdData.batteryVoltage! < 12.0 ? 'Low' : 'Correct'),
+          statusColor: obdData.batteryVoltage == null
+              ? AppColors.secondaryText
+              : (obdData.batteryVoltage! < 12.0
+                    ? AppColors.error
+                    : AppColors.success),
         ),
         SensorTileWidget(
           icon: Icons.shutter_speed_rounded,
           title: 'Speed',
           value: obdData.speed?.toString() ?? '---',
           unit: 'km/h',
-          status: obdData.speed == null ? 'No Data' : (obdData.speed! > 0 ? 'Driving' : 'Idle'),
-          statusColor: obdData.speed == null ? AppColors.secondaryText : (obdData.speed! > 0 ? AppColors.primary : AppColors.secondaryText),
+          status: obdData.speed == null
+              ? 'No Data'
+              : (obdData.speed! > 0 ? 'Driving' : 'Idle'),
+          statusColor: obdData.speed == null
+              ? AppColors.secondaryText
+              : (obdData.speed! > 0
+                    ? AppColors.primary
+                    : AppColors.secondaryText),
         ),
         SensorTileWidget(
           icon: Icons.air_rounded,
@@ -306,7 +488,10 @@ class HomeDashboardScreen extends StatelessWidget {
 
   Widget _buildProtocolFooter(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: AppSpacing.md),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.md,
+      ),
       decoration: BoxDecoration(
         color: AppColors.primaryText,
         borderRadius: BorderRadius.circular(AppRadii.lg),
@@ -319,11 +504,15 @@ class HomeDashboardScreen extends StatelessWidget {
             children: [
               Text(
                 'Protocol: ISO 15765-4 (CAN)',
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.white60),
+                style: Theme.of(
+                  context,
+                ).textTheme.labelSmall?.copyWith(color: Colors.white60),
               ),
               Text(
                 'Sampling Rate: 5 Hz',
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.white60),
+                style: Theme.of(
+                  context,
+                ).textTheme.labelSmall?.copyWith(color: Colors.white60),
               ),
             ],
           ),
@@ -335,7 +524,9 @@ class HomeDashboardScreen extends StatelessWidget {
             ),
             child: Text(
               'Bus Load: 3.2%',
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.white),
+              style: Theme.of(
+                context,
+              ).textTheme.labelSmall?.copyWith(color: Colors.white),
             ),
           ),
         ],

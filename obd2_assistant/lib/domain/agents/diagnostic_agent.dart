@@ -33,6 +33,7 @@ class DiagnosticAgent {
         {'role': 'user', 'content': 'Faire un Diagnostic complet'}
       ],
       diagnosticContext: context,
+      isDiagnosticReport: true,
     );
     // Comme on n'utilise plus de JSON strict, on renvoie un rapport simplifié ou on gère l'erreur
     // Pour éviter de casser l'existant, on peut essayer de parser, ou renvoyer un objet vide
@@ -40,51 +41,65 @@ class DiagnosticAgent {
       return _parseReport(response.text ?? "");
     } catch (e) {
       return FullDiagnosticReport(
-        vehicleInfo: "Véhicule détecté",
-        vehicleSummary: "Rapport textuel disponible dans le chat",
-        globalHealth: "warning",
-        logicExplanation: response.text ?? "",
-        abnormalPids: [],
-        issues: [],
-        immediateActions: [],
-        preventiveActions: [],
+        overview: DiagnosticOverview(
+          status: "danger",
+          summary: "Erreur lors de la génération du rapport textuel.",
+          primaryProblem: "Rapport introuvable ou mal formaté.",
+        ),
+        problems: [],
+        causes: [],
+        repairPlan: RepairPlan(
+          urgency: "unknown",
+          steps: [],
+          estimatedDifficulty: "unknown",
+        ),
       );
     }
   }
 
   FullDiagnosticReport _parseReport(String jsonText) {
     final map = jsonDecode(jsonText) as Map<String, dynamic>;
-    final issuesRaw = map["issues"] as List<dynamic>? ?? [];
-    final pidsRaw = map["abnormal_pids"] as List<dynamic>? ?? [];
+    
+    final overviewMap = map["overview"] as Map<String, dynamic>? ?? {};
+    final problemsRaw = map["problems"] as List<dynamic>? ?? [];
+    final causesRaw = map["causes"] as List<dynamic>? ?? [];
+    final repairPlanMap = map["repair_plan"] as Map<String, dynamic>? ?? {};
+    final stepsRaw = repairPlanMap["steps"] as List<dynamic>? ?? [];
 
     return FullDiagnosticReport(
-      vehicleInfo: map["vehicle_info"]?.toString() ?? "Unknown",
-      vehicleSummary: map["vehicle_summary"]?.toString() ?? "Summary unavailable",
-      globalHealth: map["global_health"]?.toString() ?? "unknown",
-      logicExplanation: map["logic_explanation"]?.toString() ?? "No technical explanation provided.",
-      abnormalPids: pidsRaw.map((e) {
-        final pid = e as Map<String, dynamic>;
-        return AbnormalPid(
-          pid: pid["pid"]?.toString() ?? "Unknown PID",
-          value: pid["value"]?.toString() ?? "N/A",
-          reason: pid["reason"]?.toString() ?? "Abnormal value detected",
+      overview: DiagnosticOverview(
+        status: overviewMap["status"]?.toString() ?? "unknown",
+        summary: overviewMap["summary"]?.toString() ?? "Summary unavailable",
+        primaryProblem: overviewMap["primary_problem"]?.toString() ?? "Unknown problem",
+      ),
+      problems: problemsRaw.map((e) {
+        final problem = e as Map<String, dynamic>;
+        return DiagnosticProblem(
+          title: problem["title"]?.toString() ?? "Issue",
+          severity: problem["severity"]?.toString() ?? "medium",
+          description: problem["description"]?.toString() ?? "No description",
         );
       }).toList(),
-      issues: issuesRaw.map((e) {
-        final issue = e as Map<String, dynamic>;
-        return FullDiagnosticIssue(
-          title: issue["title"]?.toString() ?? "Issue",
-          severity: issue["severity"]?.toString() ?? "medium",
-          probableCause: issue["probable_cause"]?.toString() ?? "Cause not specified",
-          recommendation: issue["recommendation"]?.toString() ?? "No recommendation",
+      causes: causesRaw.map((e) {
+        final cause = e as Map<String, dynamic>;
+        return DiagnosticCause(
+          cause: cause["cause"]?.toString() ?? "Unknown cause",
+          probability: cause["probability"]?.toString() ?? "medium",
+          evidence: cause["evidence"]?.toString() ?? "No evidence",
         );
       }).toList(),
-      immediateActions: (map["immediate_actions"] as List<dynamic>? ?? const [])
-          .map((e) => e.toString())
-          .toList(),
-      preventiveActions: (map["preventive_actions"] as List<dynamic>? ?? const [])
-          .map((e) => e.toString())
-          .toList(),
+      repairPlan: RepairPlan(
+        urgency: repairPlanMap["urgency"]?.toString() ?? "unknown",
+        estimatedDifficulty: repairPlanMap["estimated_difficulty"]?.toString() ?? "unknown",
+        steps: stepsRaw.map((e) {
+          final step = e as Map<String, dynamic>;
+          return RepairStep(
+            stepNumber: int.tryParse(step["step_number"]?.toString() ?? "0") ?? 0,
+            action: step["action"]?.toString() ?? "Action",
+            type: step["type"]?.toString() ?? "maintenance",
+          );
+        }).toList(),
+      ),
     );
   }
 }
