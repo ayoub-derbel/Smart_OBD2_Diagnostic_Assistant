@@ -12,10 +12,16 @@ class ChatViewModel extends ChangeNotifier {
   bool _isAsking = false;
   String? _error;
   List<ChatMessage> _chatHistory = [];
+  bool _shouldExpandChat = false;
 
   bool get isAsking => _isAsking;
   String? get error => _error;
   List<ChatMessage> get chatHistory => _chatHistory;
+  bool get shouldExpandChat => _shouldExpandChat;
+
+  void consumeShouldExpandChat() {
+    _shouldExpandChat = false;
+  }
 
   Future<void> updateHistory() async {
     final history = await _agent.chatHistory;
@@ -98,6 +104,16 @@ class ChatViewModel extends ChangeNotifier {
 
   Future<void> initWithContext(Map<String, dynamic>? scanContext) async {
     await updateHistory();
+  }
+
+  Future<void> loadSessionChat(String sessionId) async {
+    _isAsking = false;
+    _error = null;
+    await updateHistory();
+    if (_chatHistory.isNotEmpty) {
+      _shouldExpandChat = true;
+    }
+    notifyListeners();
   }
 
   Future<void> sendMessage(String text) async {

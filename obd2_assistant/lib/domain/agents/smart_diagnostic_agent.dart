@@ -5,6 +5,7 @@ import '../../data/services/obd2_service.dart';
 import '../entities/chat_message.dart';
 import '../entities/diagnostic_session.dart';
 import '../entities/scan_record.dart';
+import '../entities/scan_step.dart';
 import '../repositories/chat_history_repository.dart';
 import '../repositories/diagnostic_session_repository.dart';
 import '../repositories/scan_history_repository.dart';
@@ -33,17 +34,33 @@ class SmartDiagnosticAgent {
   }
 
   Map<String, dynamic>? get lastScanContext => _activeSession?.diagnosticContext;
+  DateTime? get lastScanDate => _activeSession?.createdAt;
 
   Future<DiagnosticSession?> getActiveSession() => _getActiveSession();
 
   Future<void> clearHistory() async {
-    final session = await _getActiveSession();
-    if (session != null) {
-      await _historyRepo.clearSession(session.id);
-    }
     await _sessionRepo.clearActiveSession();
     _activeSession = null;
   }
+
+  Future<void> loadSession(String sessionId) async {
+    final session = await _sessionRepo.getSession(sessionId);
+    if (session != null) {
+      _activeSession = session;
+      await _sessionRepo.saveActiveSession(session);
+    }
+  }
+
+  Future<void> deleteSessionData(String sessionId) async {
+    await _historyRepo.clearSession(sessionId);
+    await _sessionRepo.deleteSession(sessionId);
+    final active = await _getActiveSession();
+    if (active?.id == sessionId) {
+      await _sessionRepo.clearActiveSession();
+      _activeSession = null;
+    }
+  }
+
 
   Future<String> _buildScanHistoryPrompt() async {
     final recentScans = await _scanHistoryRepo.getRecentScans(limit: 3);
@@ -184,12 +201,18 @@ class SmartDiagnosticAgent {
         .toList();
   }
 
-  Future<ScanSnapshot> _executeObdScan() async {
+  Future<ScanSnapshot> _executeObdScan(void Function(ScanStep)? onStepChanged) async {
+    onStepChanged?.call(ScanStep.connectingObd);
     final supportedPids = await _obd2Service.discoverSupportedPids();
-    final dtcs = await _obd2Service.readAllDTCs();
+
+    onStepChanged?.call(ScanStep.readingVin);
     final vin = await _obd2Service.readVin();
+
+    onStepChanged?.call(ScanStep.readingDtc);
+    final dtcs = await _obd2Service.readAllDTCs();
     final freezeFrames = await _obd2Service.readFreezeFrames();
 
+    onStepChanged?.call(ScanStep.readingPids);
     final pidsToRead = supportedPids.take(15).toList();
     final pidValues = await _obd2Service.readMultiplePids(pidsToRead);
 
@@ -203,19 +226,23 @@ class SmartDiagnosticAgent {
     );
   }
 
-  Future<String> performFullScan() async {
-    final previousSession = await _getActiveSession();
-    if (previousSession != null) {
-      await _historyRepo.clearSession(previousSession.id);
-    }
-
-    final scan = await _executeObdScan();
+  Future<String> performFullScan({
+    String? userNote,
+    void Function(ScanStep)? onStepChanged,
+  }) async {
+    final scan = await _executeObdScan(onStepChanged);
     final diagnosticContext = scan.toDiagnosticContext();
     final scanHistoryPrompt = await _buildScanHistoryPrompt();
 
+    onStepChanged?.call(ScanStep.aiAnalysis);
+
+    final userMessage = userNote != null && userNote.trim().isNotEmpty
+        ? 'Faire un Diagnostic complet. Remarque du conducteur : $userNote'
+        : 'Faire un Diagnostic complet';
+
     final response = await _aiApiService.chatWithUnifiedContext(
       history: [
-        {'role': 'user', 'content': 'Faire un Diagnostic complet'},
+        {'role': 'user', 'content': userMessage},
       ],
       diagnosticContext: diagnosticContext,
       isDiagnosticReport: true,

@@ -1,8 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/scan_record.dart';
+import '../../domain/entities/diagnostic_session.dart';
 import '../../data/repositories/scan_history_repository_impl.dart';
+import '../../data/repositories/diagnostic_session_repository_impl.dart';
+import '../../data/repositories/chat_history_repository_impl.dart';
+import '../providers/diagnostic_view_model.dart';
+import '../providers/chat_view_model.dart';
+import 'smart_diagnostic_screen.dart';
 
 class ScanHistoryScreen extends StatefulWidget {
   const ScanHistoryScreen({Key? key}) : super(key: key);
@@ -73,7 +80,20 @@ class _ScanHistoryScreenState extends State<ScanHistoryScreen> {
     );
 
     if (confirmed == true) {
+      final diagnosticVM = context.read<DiagnosticViewModel>();
+      final chatVM = context.read<ChatViewModel>();
+
       await _scanHistoryRepo.deleteScan(id);
+      await DiagnosticSessionRepositoryImpl().deleteSession(id);
+      await ChatHistoryRepositoryImpl().clearSession(id);
+
+      final activeSession = await DiagnosticSessionRepositoryImpl().getActiveSession();
+      if (activeSession?.id == id) {
+        await DiagnosticSessionRepositoryImpl().clearActiveSession();
+        await diagnosticVM.reset();
+        await chatVM.reset();
+      }
+
       _loadHistory();
     }
   }
@@ -96,8 +116,61 @@ class _ScanHistoryScreenState extends State<ScanHistoryScreen> {
     );
 
     if (confirmed == true) {
+      final diagnosticVM = context.read<DiagnosticViewModel>();
+      final chatVM = context.read<ChatViewModel>();
+
       await _scanHistoryRepo.clearAll();
+      await DiagnosticSessionRepositoryImpl().clearAll();
+      await ChatHistoryRepositoryImpl().clearAll();
+      await DiagnosticSessionRepositoryImpl().clearActiveSession();
+      await diagnosticVM.reset();
+      await chatVM.reset();
       _loadHistory();
+    }
+  }
+
+  Future<void> _loadAndNavigateToSession(String id) async {
+    final diagnosticVM = context.read<DiagnosticViewModel>();
+    final chatVM = context.read<ChatViewModel>();
+    final navigator = Navigator.of(context);
+
+    setState(() => _isLoading = true);
+    try {
+      final sessionRepo = DiagnosticSessionRepositoryImpl();
+      final DiagnosticSession? session = await sessionRepo.getSession(id);
+      if (session == null) {
+        throw Exception("Session de diagnostic introuvable.");
+      }
+
+      // 1. Charger la session dans DiagnosticViewModel
+      await diagnosticVM.loadSession(session);
+
+      // 2. Charger l'historique du chat dans ChatViewModel
+      await chatVM.loadSessionChat(session.id);
+
+      setState(() => _isLoading = false);
+
+      if (!mounted) return;
+
+      // 3. Naviguer vers SmartDiagnosticScreen en mode historique
+      await navigator.push(
+        MaterialPageRoute(
+          builder: (_) => SmartDiagnosticScreen(
+            historySession: session,
+            isHistoryMode: true,
+          ),
+        ),
+      );
+
+      // Rafraîchir l'historique après le retour
+      _loadHistory();
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur: $e')),
+        );
+      }
     }
   }
 
@@ -341,7 +414,7 @@ class _ScanHistoryScreenState extends State<ScanHistoryScreen> {
       backgroundColor: AppColors.background,
       appBar: AppBar(
         title: Text(
-          'Historique des Scans',
+          'Historique des Sessions',
           style: GoogleFonts.outfit(fontWeight: FontWeight.bold, color: AppColors.primaryText),
         ),
         centerTitle: true,
@@ -457,18 +530,48 @@ class _ScanHistoryScreenState extends State<ScanHistoryScreen> {
                                   ),
                                 ],
                                 const SizedBox(height: 8),
+                                const SizedBox(height: 12),
+                                const Divider(height: 1),
+                                const SizedBox(height: 8),
                                 Row(
-                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
-                                    Text(
-                                      'Voir le rapport complet',
-                                      style: GoogleFonts.outfit(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.bold,
-                                        color: AppColors.primary,
+                                    TextButton.icon(
+                                      onPressed: () => _showScanDetail(scan),
+                                      icon: const Icon(Icons.analytics_rounded, size: 18, color: AppColors.secondaryText),
+                                      label: Text(
+                                        'Détails OBD',
+                                        style: GoogleFonts.outfit(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.bold,
+                                          color: AppColors.secondaryText,
+                                        ),
+                                      ),
+                                      style: TextButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                        minimumSize: Size.zero,
+                                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                       ),
                                     ),
-                                    const Icon(Icons.chevron_right_rounded, color: AppColors.primary, size: 18),
+                                    ElevatedButton.icon(
+                                      onPressed: () => _loadAndNavigateToSession(scan.id),
+                                      icon: const Icon(Icons.auto_awesome_rounded, size: 16, color: Colors.white),
+                                      label: Text(
+                                        'Consulter',
+                                        style: GoogleFonts.outfit(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: AppColors.primary,
+                                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                        minimumSize: const Size(80, 32),
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                        elevation: 0.5,
+                                      ),
+                                    ),
                                   ],
                                 )
                               ],

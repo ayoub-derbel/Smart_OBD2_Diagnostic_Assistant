@@ -10,9 +10,20 @@ import '../providers/chat_view_model.dart';
 import '../../domain/entities/chat_message.dart';
 import 'scan_history_screen.dart';
 import '../../domain/entities/full_diagnostic_report.dart';
+import '../../domain/entities/scan_step.dart';
+import '../../domain/entities/diagnostic_session.dart';
+
+enum StepStatus { pending, inProgress, completed }
 
 class SmartDiagnosticScreen extends StatefulWidget {
-  const SmartDiagnosticScreen({super.key});
+  final DiagnosticSession? historySession;
+  final bool isHistoryMode;
+
+  const SmartDiagnosticScreen({
+    super.key,
+    this.historySession,
+    this.isHistoryMode = false,
+  });
 
   @override
   State<SmartDiagnosticScreen> createState() => _SmartDiagnosticScreenState();
@@ -20,7 +31,6 @@ class SmartDiagnosticScreen extends StatefulWidget {
 
 class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
   final TextEditingController _chatController = TextEditingController();
-  final ScrollController _chatScrollController = ScrollController();
   final DraggableScrollableController _sheetController =
       DraggableScrollableController();
   double _currentSheetSize = 0.12;
@@ -30,7 +40,9 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
     super.initState();
     _sheetController.addListener(_onSheetSizeChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await context.read<DiagnosticViewModel>().loadActiveSession();
+      if (!widget.isHistoryMode) {
+        await context.read<DiagnosticViewModel>().loadActiveSession();
+      }
       if (!mounted) return;
       await context.read<ChatViewModel>().updateHistory();
     });
@@ -47,7 +59,6 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
   @override
   void dispose() {
     _chatController.dispose();
-    _chatScrollController.dispose();
     _sheetController.removeListener(_onSheetSizeChanged);
     _sheetController.dispose();
     super.dispose();
@@ -293,41 +304,70 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
     final diagnosticVM = context.watch<DiagnosticViewModel>();
     final chatVM = context.watch<ChatViewModel>();
 
+    if (!widget.isHistoryMode && chatVM.shouldExpandChat) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_sheetController.isAttached) {
+          _sheetController.animateTo(
+            1.0,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+        }
+      });
+      chatVM.consumeShouldExpandChat();
+    } else if (widget.isHistoryMode && chatVM.shouldExpandChat) {
+      chatVM.consumeShouldExpandChat();
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA),
       appBar: AppBar(
         title: Text(
-          "Assistant IA Smart Diagnostic",
+          widget.isHistoryMode
+              ? "Historique des Sessions"
+              : "Assistant IA Smart Diagnostic",
           style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.history_rounded),
-            tooltip: 'Historique des scans',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const ScanHistoryScreen()),
+        leading: widget.isHistoryMode
+            ? IconButton(
+                icon: const Icon(
+                  Icons.arrow_back_ios_new_rounded,
+                  color: AppColors.primaryText,
+                ),
+                onPressed: () => Navigator.pop(context),
+              )
+            : null,
+        actions: widget.isHistoryMode
+            ? const []
+            : [
+                IconButton(
+                  icon: const Icon(Icons.history_rounded),
+                  tooltip: 'Historique des scans',
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const ScanHistoryScreen(),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  tooltip: 'Réinitialiser',
+                  onPressed: () async {
+                    await diagnosticVM.reset();
+                    await chatVM.reset();
+                  },
+                ),
+              ],
+      ),
+      body: widget.isHistoryMode
+          ? _buildDiagnosticContent(diagnosticVM, chatVM)
+          : Stack(
+              children: [
+                _buildDiagnosticContent(diagnosticVM, chatVM),
+                if (diagnosticVM.hasReport) _buildChatPanel(chatVM),
+              ],
             ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Réinitialiser',
-            onPressed: () async {
-              await diagnosticVM.reset();
-              await chatVM.reset();
-            },
-          ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          // Background: Diagnostic content (scrollable)
-          _buildDiagnosticContent(diagnosticVM, chatVM),
-
-          // Sliding Panel: Chatbot
-          if (diagnosticVM.hasReport) _buildChatPanel(chatVM),
-        ],
-      ),
     );
   }
 
@@ -336,18 +376,18 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
     ChatViewModel chatVM,
   ) {
     if (diagnosticVM.isScanning) {
-      return _buildScanningState();
+      return _buildScanningState(diagnosticVM);
     }
 
     if (diagnosticVM.error != null) {
-      return _buildErrorState(diagnosticVM);
+      return _buildErrorState(diagnosticVM, chatVM);
     }
 
     if (!diagnosticVM.hasReport) {
       return _buildBeforeScanState(diagnosticVM, chatVM);
     }
 
-    return _buildReportContent(diagnosticVM);
+    return _buildReportContent(diagnosticVM, chatVM);
   }
 
   Widget _buildBeforeScanState(
@@ -428,12 +468,8 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
               width: double.infinity,
               height: 56,
               child: ElevatedButton.icon(
-                onPressed: () async {
-                  await diagnosticVM.runFullDiagnostic();
-                  if (diagnosticVM.hasReport) {
-                    await chatVM.initWithContext(diagnosticVM.lastScanContext);
-                  }
-                },
+                onPressed: () =>
+                    _showSymptomDialog(context, diagnosticVM, chatVM),
                 icon: const Icon(
                   Icons.play_arrow_rounded,
                   color: Colors.white,
@@ -481,47 +517,402 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
     );
   }
 
-  Widget _buildScanningState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(
-              width: 64,
-              height: 64,
-              child: CircularProgressIndicator(
-                strokeWidth: 4,
-                valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+  final List<Map<String, dynamic>> _stepsData = [
+    {
+      'title': 'Connexion OBD-II',
+      'subtitle': 'Établissement de la liaison avec le boîtier ELM327...',
+      'icon': Icons.bluetooth_connected_rounded,
+    },
+    {
+      'title': 'Lecture du VIN',
+      'subtitle': "Identification du numéro de série pour décoder le modèle...",
+      'icon': Icons.fingerprint_rounded,
+    },
+    {
+      'title': 'Lecture des codes défaut (DTC)',
+      'subtitle': 'Scan des calculateurs (ECU) à la recherche d\'erreurs...',
+      'icon': Icons.error_outline_rounded,
+    },
+    {
+      'title': 'Lecture des capteurs (PIDs)',
+      'subtitle': 'Extraction des métriques physiques du moteur en direct...',
+      'icon': Icons.speed_rounded,
+    },
+    {
+      'title': 'Analyse par Intelligence Artificielle',
+      'subtitle':
+          'Traitement des données et formulation des recommandations...',
+      'icon': Icons.psychology_rounded,
+    },
+  ];
+
+  int _getStepIndex(ScanStep? step) {
+    if (step == null) return -1;
+    switch (step) {
+      case ScanStep.connectingObd:
+        return 0;
+      case ScanStep.readingVin:
+        return 1;
+      case ScanStep.readingDtc:
+        return 2;
+      case ScanStep.readingPids:
+        return 3;
+      case ScanStep.aiAnalysis:
+        return 4;
+      case ScanStep.done:
+        return 5;
+    }
+  }
+
+  StepStatus _getStepStatus(int stepIndex, int currentIndex) {
+    if (currentIndex > stepIndex) return StepStatus.completed;
+    if (currentIndex == stepIndex) return StepStatus.inProgress;
+    return StepStatus.pending;
+  }
+
+  void _showSymptomDialog(
+    BuildContext context,
+    DiagnosticViewModel diagnosticVM,
+    ChatViewModel chatVM,
+  ) {
+    final textController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: Row(
+            children: [
+              const Icon(Icons.note_alt_outlined, color: AppColors.primary),
+              const SizedBox(width: 10),
+              Text(
+                "Remarques & Symptômes",
+                style: GoogleFonts.outfit(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 20,
+                  color: AppColors.primaryText,
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                "Décrivez les symptômes actuels du véhicule (bruits, perte de puissance, voyants...) pour affiner l'analyse de l'IA.",
+                style: GoogleFonts.outfit(
+                  fontSize: 14,
+                  color: AppColors.secondaryText,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: textController,
+                maxLines: 3,
+                decoration: InputDecoration(
+                  hintText:
+                      "Ex: Le moteur broute à bas régime, le voyant moteur est allumé...",
+                  hintStyle: GoogleFonts.outfit(
+                    fontSize: 14,
+                    color: Colors.grey,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: AppColors.divider),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(
+                      color: AppColors.primary,
+                      width: 2,
+                    ),
+                  ),
+                  contentPadding: const EdgeInsets.all(12),
+                ),
+                style: GoogleFonts.outfit(fontSize: 14),
+              ),
+            ],
+          ),
+          actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                await diagnosticVM.runFullDiagnostic();
+                if (diagnosticVM.hasReport) {
+                  await chatVM.initWithContext(diagnosticVM.lastScanContext);
+                }
+              },
+              child: Text(
+                "Passer",
+                style: GoogleFonts.outfit(
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.secondaryText,
+                ),
               ),
             ),
-            const SizedBox(height: 32),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 12,
+                ),
+              ),
+              onPressed: () async {
+                final note = textController.text.trim();
+                Navigator.pop(context);
+                await diagnosticVM.runFullDiagnostic(
+                  userNote: note.isEmpty ? null : note,
+                );
+                if (diagnosticVM.hasReport) {
+                  await chatVM.initWithContext(diagnosticVM.lastScanContext);
+                }
+              },
+              child: Text(
+                "Lancer l'analyse",
+                style: GoogleFonts.outfit(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildStepItem({
+    required int index,
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required StepStatus status,
+    required bool isLast,
+  }) {
+    Color iconBgColor;
+    Color iconColor;
+    Widget leadingWidget;
+    TextStyle titleStyle = GoogleFonts.outfit(
+      fontSize: 16,
+      fontWeight: FontWeight.w600,
+    );
+    TextStyle subtitleStyle = GoogleFonts.outfit(fontSize: 13);
+
+    switch (status) {
+      case StepStatus.completed:
+        iconBgColor = const Color(0xFFE8F5E9);
+        iconColor = const Color(0xFF2E7D32);
+        leadingWidget = Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(color: iconBgColor, shape: BoxShape.circle),
+          child: Icon(Icons.check_rounded, color: iconColor, size: 20),
+        );
+        titleStyle = titleStyle.copyWith(color: AppColors.primaryText);
+        subtitleStyle = subtitleStyle.copyWith(color: AppColors.secondaryText);
+        break;
+      case StepStatus.inProgress:
+        iconBgColor = AppColors.primary.withOpacity(0.1);
+        iconColor = AppColors.primary;
+        leadingWidget = Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(color: iconBgColor, shape: BoxShape.circle),
+          child: Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(iconColor),
+            ),
+          ),
+        );
+        titleStyle = titleStyle.copyWith(
+          color: AppColors.primary,
+          fontWeight: FontWeight.bold,
+        );
+        subtitleStyle = subtitleStyle.copyWith(
+          color: AppColors.primary.withOpacity(0.8),
+        );
+        break;
+      case StepStatus.pending:
+        iconBgColor = Colors.grey.shade100;
+        iconColor = Colors.grey.shade400;
+        leadingWidget = Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(color: iconBgColor, shape: BoxShape.circle),
+          child: Icon(icon, color: iconColor, size: 18),
+        );
+        titleStyle = titleStyle.copyWith(color: Colors.grey.shade400);
+        subtitleStyle = subtitleStyle.copyWith(color: Colors.grey.shade400);
+        break;
+    }
+
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Column(
+            children: [
+              leadingWidget,
+              if (!isLast)
+                Expanded(
+                  child: Container(
+                    width: 2,
+                    color: status == StepStatus.completed
+                        ? const Color(0xFF2E7D32)
+                        : Colors.grey.shade300,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 24.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: titleStyle),
+                  const SizedBox(height: 4),
+                  Text(subtitle, style: subtitleStyle),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  IconData _getStepIconForHeader(ScanStep? step) {
+    if (step == null) return Icons.directions_car_rounded;
+    switch (step) {
+      case ScanStep.connectingObd:
+        return Icons.bluetooth_searching_rounded;
+      case ScanStep.readingVin:
+        return Icons.fingerprint_rounded;
+      case ScanStep.readingDtc:
+        return Icons.search_rounded;
+      case ScanStep.readingPids:
+        return Icons.speed_rounded;
+      case ScanStep.aiAnalysis:
+        return Icons.psychology_rounded;
+      case ScanStep.done:
+        return Icons.check_circle_rounded;
+    }
+  }
+
+  Widget _buildScanningState(DiagnosticViewModel diagnosticVM) {
+    final currentStep = diagnosticVM.currentStep;
+    final currentIndex = _getStepIndex(currentStep);
+
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 100,
+              height: 100,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  // Glowing outer halo
+                  Container(
+                    width: 80,
+                    height: 80,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withOpacity(0.05),
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.primary.withOpacity(0.12),
+                          blurRadius: 16,
+                          spreadRadius: 4,
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Spinning Outer Loader
+                  const SizedBox(
+                    width: 72,
+                    height: 72,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 3,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        AppColors.primary,
+                      ),
+                    ),
+                  ),
+                  // Center Icon showing active stage
+                  Container(
+                    width: 50,
+                    height: 50,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.08),
+                          blurRadius: 8,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      _getStepIconForHeader(currentStep),
+                      color: AppColors.primary,
+                      size: 26,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
             Text(
-              "Diagnostic en cours...",
+              "Diagnostic guidé en cours",
               style: GoogleFonts.outfit(
                 fontSize: 22,
                 fontWeight: FontWeight.bold,
                 color: AppColors.primaryText,
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             Text(
-              "Lecture des codes d'erreur et des valeurs des capteurs via OBD2...",
+              "Veuillez patienter pendant que nous communiquons avec votre véhicule.",
               style: GoogleFonts.outfit(
-                fontSize: 15,
+                fontSize: 14,
                 color: AppColors.secondaryText,
               ),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 8),
-            Text(
-              "Analyse intelligente avec Groq AI...",
-              style: GoogleFonts.outfit(
-                fontSize: 13,
-                color: AppColors.primary,
-                fontStyle: FontStyle.italic,
-              ),
+            const SizedBox(height: 32),
+            Column(
+              children: List.generate(_stepsData.length, (index) {
+                final stepData = _stepsData[index];
+                final stepStatus = _getStepStatus(index, currentIndex);
+
+                return _buildStepItem(
+                  index: index,
+                  title: stepData['title'] as String,
+                  subtitle: stepData['subtitle'] as String,
+                  icon: stepData['icon'] as IconData,
+                  status: stepStatus,
+                  isLast: index == _stepsData.length - 1,
+                );
+              }),
             ),
           ],
         ),
@@ -529,7 +920,10 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
     );
   }
 
-  Widget _buildErrorState(DiagnosticViewModel diagnosticVM) {
+  Widget _buildErrorState(
+    DiagnosticViewModel diagnosticVM,
+    ChatViewModel chatVM,
+  ) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -564,7 +958,8 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
               width: 200,
               height: 48,
               child: ElevatedButton(
-                onPressed: () => diagnosticVM.runFullDiagnostic(),
+                onPressed: () =>
+                    _showSymptomDialog(context, diagnosticVM, chatVM),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary,
                   shape: RoundedRectangleBorder(
@@ -591,22 +986,26 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
     try {
       final decoded = _tryDecodeJsonMap(text);
       if (decoded == null) return null;
-      
-      if (!decoded.containsKey('overview') && !decoded.containsKey('repair_plan')) {
+
+      if (!decoded.containsKey('overview') &&
+          !decoded.containsKey('repair_plan')) {
         return null;
       }
-      
+
       final overviewMap = decoded["overview"] as Map<String, dynamic>? ?? {};
       final problemsRaw = decoded["problems"] as List<dynamic>? ?? [];
       final causesRaw = decoded["causes"] as List<dynamic>? ?? [];
-      final repairPlanMap = decoded["repair_plan"] as Map<String, dynamic>? ?? {};
+      final repairPlanMap =
+          decoded["repair_plan"] as Map<String, dynamic>? ?? {};
       final stepsRaw = repairPlanMap["steps"] as List<dynamic>? ?? [];
 
       return FullDiagnosticReport(
         overview: DiagnosticOverview(
           status: overviewMap["status"]?.toString() ?? "unknown",
           summary: overviewMap["summary"]?.toString() ?? "",
-          primaryProblem: overviewMap["primary_problem"]?.toString() ?? "Problème principal non spécifié",
+          primaryProblem:
+              overviewMap["primary_problem"]?.toString() ??
+              "Problème principal non spécifié",
         ),
         problems: problemsRaw.map((e) {
           final problem = e as Map<String, dynamic>;
@@ -626,11 +1025,13 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
         }).toList(),
         repairPlan: RepairPlan(
           urgency: repairPlanMap["urgency"]?.toString() ?? "routine",
-          estimatedDifficulty: repairPlanMap["estimated_difficulty"]?.toString() ?? "easy",
+          estimatedDifficulty:
+              repairPlanMap["estimated_difficulty"]?.toString() ?? "easy",
           steps: stepsRaw.map((e) {
             final step = e as Map<String, dynamic>;
             return RepairStep(
-              stepNumber: int.tryParse(step["step_number"]?.toString() ?? "0") ?? 0,
+              stepNumber:
+                  int.tryParse(step["step_number"]?.toString() ?? "0") ?? 0,
               action: step["action"]?.toString() ?? "",
               type: step["type"]?.toString() ?? "maintenance",
             );
@@ -642,18 +1043,28 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
     }
   }
 
-  Widget _buildStructuredReportContent(DiagnosticViewModel diagnosticVM, FullDiagnosticReport report) {
+  Widget _buildStructuredReportContent(
+    DiagnosticViewModel diagnosticVM,
+    ChatViewModel chatVM,
+    FullDiagnosticReport report,
+  ) {
     final isSafe = report.overview.status.toLowerCase() == "safe";
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 120),
+      padding: EdgeInsets.fromLTRB(16, 16, 16, widget.isHistoryMode ? 24 : 120),
       children: [
         _buildReportHeaderCard(diagnosticVM),
         const SizedBox(height: 12),
         _buildOverviewCard(report.overview),
-        if (!isSafe && report.problems.isNotEmpty) _buildProblemsCard(report.problems),
-        if (!isSafe && report.causes.isNotEmpty) _buildCausesCard(report.causes),
+        if (!isSafe && report.problems.isNotEmpty)
+          _buildProblemsCard(report.problems),
+        if (!isSafe && report.causes.isNotEmpty)
+          _buildCausesCard(report.causes),
         if (!isSafe) _buildRepairPlanCard(report.repairPlan),
+        if (widget.isHistoryMode) ...[
+          const SizedBox(height: 4),
+          _buildChatSection(chatVM),
+        ],
       ],
     );
   }
@@ -677,7 +1088,7 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
       borderColor = AppColors.accent;
       textColor = const Color(0xFFD97706);
       icon = Icons.warning_amber_rounded;
-      safetyTitle = "ATTENTION - Vigilance requise";
+      safetyTitle = "Etat du vehicule - Vigilance requise";
     } else {
       cardBg = const Color(0xFFE8F5E9);
       borderColor = AppColors.success;
@@ -755,9 +1166,7 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
         borderRadius: BorderRadius.circular(16),
         child: Container(
           decoration: const BoxDecoration(
-            border: Border(
-              left: BorderSide(color: AppColors.error, width: 5),
-            ),
+            border: Border(left: BorderSide(color: AppColors.error, width: 5)),
           ),
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -874,9 +1283,7 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
         borderRadius: BorderRadius.circular(16),
         child: Container(
           decoration: const BoxDecoration(
-            border: Border(
-              left: BorderSide(color: Colors.purple, width: 5),
-            ),
+            border: Border(left: BorderSide(color: Colors.purple, width: 5)),
           ),
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -1016,9 +1423,7 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
         borderRadius: BorderRadius.circular(16),
         child: Container(
           decoration: const BoxDecoration(
-            border: Border(
-              left: BorderSide(color: Colors.teal, width: 5),
-            ),
+            border: Border(left: BorderSide(color: Colors.teal, width: 5)),
           ),
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -1205,14 +1610,21 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
     }
   }
 
-  Widget _buildReportContent(DiagnosticViewModel diagnosticVM) {
+  Widget _buildReportContent(
+    DiagnosticViewModel diagnosticVM,
+    ChatViewModel chatVM,
+  ) {
     final reportText = diagnosticVM.reportText ?? "";
-    
+
     final structuredReport = _tryParseStructuredReport(reportText);
     if (structuredReport != null) {
-      return _buildStructuredReportContent(diagnosticVM, structuredReport);
+      return _buildStructuredReportContent(
+        diagnosticVM,
+        chatVM,
+        structuredReport,
+      );
     }
-    
+
     final parsed = _parseReportSections(reportText);
 
     // If parsing failed to extract meaningful fields, fall back to single card
@@ -1220,7 +1632,12 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
         parsed['SAFETY'] == null ||
         parsed['VEHICLE SUMMARY'] == null) {
       return ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 120),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          16,
+          16,
+          widget.isHistoryMode ? 24 : 120,
+        ),
         children: [
           _buildReportHeaderCard(diagnosticVM),
           const SizedBox(height: 16),
@@ -1265,12 +1682,16 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
               ),
             ),
           ),
+          if (widget.isHistoryMode) ...[
+            const SizedBox(height: 4),
+            _buildChatSection(chatVM),
+          ],
         ],
       );
     }
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 120),
+      padding: EdgeInsets.fromLTRB(16, 16, 16, widget.isHistoryMode ? 24 : 120),
       children: [
         _buildReportHeaderCard(diagnosticVM),
         const SizedBox(height: 12),
@@ -1304,12 +1725,26 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
           _buildRootCauseCard(parsed['ROOT CAUSE']!),
         if (parsed['REPAIR'] != null) _buildRepairCard(parsed['REPAIR']!),
         if (parsed['URGENCY'] != null) _buildUrgencyCard(parsed['URGENCY']!),
+        if (widget.isHistoryMode) ...[
+          const SizedBox(height: 4),
+          _buildChatSection(chatVM),
+        ],
       ],
     );
   }
 
+  String _formatDateTime(DateTime date) {
+    final day = date.day.toString().padLeft(2, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    final year = date.year;
+    final hour = date.hour.toString().padLeft(2, '0');
+    final minute = date.minute.toString().padLeft(2, '0');
+    return '$day/$month/$year à $hour:$minute';
+  }
+
   Widget _buildReportHeaderCard(DiagnosticViewModel vm) {
     final vin = vm.lastScanContext?['vin']?.toString() ?? "Non détecté";
+    final date = vm.lastScanDate;
 
     return Card(
       elevation: 0,
@@ -1325,12 +1760,18 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: AppColors.success.withOpacity(0.1),
+                color: widget.isHistoryMode
+                    ? AppColors.primary.withOpacity(0.1)
+                    : AppColors.success.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: const Icon(
-                Icons.verified_rounded,
-                color: AppColors.success,
+              child: Icon(
+                widget.isHistoryMode
+                    ? Icons.history_rounded
+                    : Icons.verified_rounded,
+                color: widget.isHistoryMode
+                    ? AppColors.primary
+                    : AppColors.success,
                 size: 28,
               ),
             ),
@@ -1340,7 +1781,9 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    "Analyse Terminée",
+                    widget.isHistoryMode
+                        ? "Diagnostic Enregistré"
+                        : "Analyse Terminée",
                     style: GoogleFonts.outfit(
                       fontWeight: FontWeight.bold,
                       fontSize: 18,
@@ -1348,12 +1791,22 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
                     ),
                   ),
                   const SizedBox(height: 4),
+                  if (widget.isHistoryMode && date != null) ...[
+                    Text(
+                      "Le ${_formatDateTime(date)}",
+                      style: GoogleFonts.outfit(
+                        fontSize: 14,
+                        color: AppColors.secondaryText,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                  ],
                   Text(
                     "VIN: $vin",
                     style: GoogleFonts.outfit(
                       fontSize: 14,
                       color: AppColors.secondaryText,
-                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ],
@@ -1390,7 +1843,7 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
       borderColor = AppColors.accent;
       textColor = const Color(0xFFD97706);
       icon = Icons.warning_amber_rounded;
-      safetyTitle = "ATTENTION - Vigilance requise";
+      safetyTitle = "Etat du vehicule - Vigilance requise";
     } else {
       cardBg = const Color(0xFFE8F5E9);
       borderColor = AppColors.success;
@@ -1693,6 +2146,48 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
     );
   }
 
+  Widget _buildChatSection(ChatViewModel chatVM) {
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: AppColors.divider),
+      ),
+      color: Colors.white,
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.chat_bubble_outline_rounded,
+                  color: AppColors.primary,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    "Historique de chat",
+                    style: GoogleFonts.outfit(
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.primary,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          ..._buildChatMessages(chatVM),
+          _buildChatInput(chatVM),
+        ],
+      ),
+    );
+  }
+
   Widget _buildChatPanel(ChatViewModel chatVM) {
     final bool isExpanded = _currentSheetSize > 0.2;
 
@@ -1719,7 +2214,6 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
                   controller: scrollController,
                   padding: EdgeInsets.zero,
                   children: [
-                    // Drag handle
                     Center(
                       child: Container(
                         margin: const EdgeInsets.only(top: 12, bottom: 8),
@@ -1731,7 +2225,6 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
                         ),
                       ),
                     ),
-                    // Header / Drag target
                     InkWell(
                       onTap: () {
                         if (_sheetController.size < 0.2) {
@@ -1781,9 +2274,10 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
                       ),
                     ),
                     const Divider(height: 1),
-                    // Chat conversation
-                    if (isExpanded)
+                    if (isExpanded) ...[
                       ..._buildChatMessages(chatVM, scrollController),
+                      const SizedBox(height: 8),
+                    ],
                   ],
                 ),
               ),
@@ -1796,10 +2290,10 @@ class _SmartDiagnosticScreenState extends State<SmartDiagnosticScreen> {
   }
 
   List<Widget> _buildChatMessages(
-    ChatViewModel chatVM,
-    ScrollController scrollController,
-  ) {
-    _scrollToBottom(scrollController);
+    ChatViewModel chatVM, [
+    ScrollController? scrollController,
+  ]) {
+    if (scrollController != null) _scrollToBottom(scrollController);
 
     // Filter out internal scan messages and the diagnostic report from the chat view.
     final displayMessages = chatVM.chatHistory.where((m) {

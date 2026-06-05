@@ -62,17 +62,6 @@ class HomeDashboardScreen extends StatelessWidget {
                           listen: false,
                         ).setIndex(1),
                       ),
-                      const SizedBox(width: AppSpacing.md),
-                      ActionCardWidget(
-                        icon: Icons.show_chart_rounded,
-                        title: 'Live Trends',
-                        subtitle: 'Real-time params',
-                        tintColor: AppColors.accent,
-                        onTap: () => Provider.of<NavigationProvider>(
-                          context,
-                          listen: false,
-                        ).setIndex(3),
-                      ),
                     ],
                   ),
                   const SizedBox(height: AppSpacing.xl),

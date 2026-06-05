@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 
 import 'core/theme/app_theme.dart';
@@ -11,6 +12,7 @@ import 'presentation/providers/bluetooth_provider.dart';
 import 'presentation/providers/obd_data_provider.dart';
 import 'presentation/providers/navigation_provider.dart';
 import 'presentation/providers/full_diagnostic_view_model.dart';
+import 'presentation/providers/language_provider.dart';
 import 'presentation/providers/logger_provider.dart';
 import 'data/datasources/ai_api_service.dart';
 import 'data/repositories/obd_bluetooth_repository_factory.dart';
@@ -78,6 +80,7 @@ class OBD2AssistantApp extends StatelessWidget {
         ChangeNotifierProvider(
           create: (_) => ObdDataProvider(bluetoothRepository),
         ),
+        ChangeNotifierProvider(create: (_) => LanguageProvider()..load()),
         ChangeNotifierProvider(create: (_) => NavigationProvider()),
         ChangeNotifierProvider(
           create: (_) => FullDiagnosticViewModel(diagnosticAgent),
@@ -88,11 +91,30 @@ class OBD2AssistantApp extends StatelessWidget {
           create: (_) => LoggerProvider()..init(bluetoothRepository),
         ),
       ],
-      child: MaterialApp(
-        title: 'OBD2 Assistant',
-        debugShowCheckedModeBanner: false,
-        theme: AppTheme.lightTheme,
-        home: const ConnectionGateScreen(),
+      child: Consumer<LanguageProvider>(
+        builder: (context, languageProvider, _) {
+          return MaterialApp(
+            title: 'OBD2 Assistant',
+            debugShowCheckedModeBanner: false,
+            theme: AppTheme.lightTheme,
+            locale: languageProvider.locale,
+            supportedLocales: AppLanguage.values
+                .map((language) => language.locale)
+                .toList(),
+            localizationsDelegates: const [
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            builder: (context, child) {
+              return Directionality(
+                textDirection: languageProvider.textDirection,
+                child: child ?? const SizedBox.shrink(),
+              );
+            },
+            home: const ConnectionGateScreen(),
+          );
+        },
       ),
     );
   }
